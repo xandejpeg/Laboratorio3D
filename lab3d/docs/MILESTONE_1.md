@@ -48,6 +48,8 @@ de ponta a ponta sobre um SCAD paramétrico (flange com furos):
 | Verificação | Resultado observado |
 |---|---|
 | Compilação com `--backend Manifold` | STL 249 kB e OBJ 27 kB, **1.084 facetas** |
+| `compileScad` (o módulo que o pipeline usa) | **180 ms**, exit 0, STL lido com 452 triângulos |
+| Porta de conectividade sobre uma peça solta plantada de propósito | `connectivity WARN — 2 disconnected part(s)`; a porta recusa chamar isso de corpo único |
 | `GET /api/params` | Os 6 parâmetros do SCAD, `customizeAvailable: true` |
 | `POST /api/customize` com parâmetro inexistente | `422` — só recompila o que o SCAD declara |
 | `POST /api/customize` pela interface (`bolt_count` 4 → 8) | `200` em **0,3 s**, malha passa de 1.084 para **1.356 triângulos** |
