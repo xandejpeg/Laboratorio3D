@@ -1,7 +1,8 @@
 # Laboratorio3D — laboratório do personagem
 
-Recebe um personagem do gerador 2D e produz sua versão 3D pelo pipeline
-Procedura, preservando identidade, proporções, cabelo, rosto, corpo e roupa.
+Recebe PNG e ficha do gerador 2D e integra sua geração ao pipeline Procedura.
+Preservar identidade, proporções, cabelo, rosto, corpo e roupa é o objetivo do
+ensaio de qualidade; essa fidelidade ainda não foi validada por geração humana.
 
 O pipeline não é substituído nem imitado:
 
@@ -32,6 +33,8 @@ verificado está em [WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md).
 | [docs/CONTRACT.md](docs/CONTRACT.md) | O contrato `lab3d.character-import` v1 — o que o gerador 2D deve enviar |
 | [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) | Bun, OpenSCAD, Blender, credenciais e execução no Windows |
 | [docs/MILESTONE_1.md](docs/MILESTONE_1.md) | O que funciona, o que está bloqueado e os limites confirmados no código |
+| [docs/MECANICO_OFFLINE.md](docs/MECANICO_OFFLINE.md) | Compilação e renders mecânicos realmente executados sem modelo |
+| [docs/QUALITY_PROTOCOL.md](docs/QUALITY_PROTOCOL.md) | Referência feminina fixa, critérios e registro dos ensaios por IA |
 | [../ATTRIBUTION.md](../ATTRIBUTION.md) | Origem, licença e convivência com o upstream |
 
 ## Organização
@@ -51,9 +54,10 @@ Funciona hoje: importação, registro imutável, tradução dos IDs para descri�
 visuais, briefing, interface, progresso real, visualização de execuções e
 recompilação de parâmetros com OpenSCAD/Manifold.
 
-Bloqueado hoje: **geração de modelo novo** — falta configurar uma credencial de
-modelo de linguagem. O laboratório informa o bloqueio em vez de simular
-progresso.
+Bloqueado hoje: **ensaio de geração de modelo novo** — faltam provedor/modelo,
+credencial local e orçamento autorizado. O laboratório informa a capacidade
+indisponível. Recompilação cria outro resultado e conserva o anterior; ensaios
+independentes aparecem separados dos personagens.
 
 ## Privacidade
 

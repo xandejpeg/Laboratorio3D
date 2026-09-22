@@ -1,37 +1,35 @@
 # Atribuição e origem
 
-Este repositório é o **Laboratorio3D** e é fundado no projeto
-**[Procedura](https://github.com/SpatiaOS/Procedura)**, da SpatiaOS.
+O **Laboratorio3D** é fundado no **[Procedura](https://github.com/SpatiaOS/Procedura)**, da SpatiaOS.
 
-| | |
-|---|---|
-| Upstream | `https://github.com/SpatiaOS/Procedura.git` (remoto `upstream`) |
-| Commit de referência | `fac191ed49f55fcc2e0f23897e986042249f59fe` |
-| Licença | MIT, do upstream, mantida sem alteração em [LICENSE](LICENSE) |
-| README original | [README.md](README.md) permanece o do Procedura, intacto |
+| Item | Registro |
+| --- | --- |
+| Upstream | `https://github.com/SpatiaOS/Procedura.git` |
+| Origin | `https://github.com/xandejpeg/Laboratorio3D.git` |
+| Commit upstream utilizado | `fac191ed49f55fcc2e0f23897e986042249f59fe` |
+| Licença | MIT, preservada sem alterações em [LICENSE](LICENSE) |
+| Histórico | Ancestral upstream completo, seguido por commits próprios do laboratório |
 
-O histórico do upstream foi preservado: este repositório parte diretamente do
-commit acima, que é o próprio topo de `upstream/main`. Nossas mudanças ficam em
-commits nossos, por cima dele.
+A versão inicial encontrada nesta continuidade era `fd3faf6`, já derivada do commit acima. Não houve reimportação, substituição desse trabalho ou force push.
 
-## Como o laboratório convive com o upstream
+O [README upstream original](https://github.com/SpatiaOS/Procedura/blob/fac191ed49f55fcc2e0f23897e986042249f59fe/README.md) permanece na história. A apresentação original continua abaixo da introdução ao laboratório no README atual.
 
-- **Nenhum arquivo upstream foi modificado.** Todo o código do laboratório está
-  em [lab3d/](lab3d/README.md).
-- O servidor do laboratório **importa e reutiliza** os módulos upstream
-  (`web/server/jobs.ts`, `web/server/scan.ts`, `web/server/customize.ts`,
-  `web/server/safe.ts`, `web/server/env.ts`) em vez de copiá-los ou
-  reimplementá-los. Toda geração é um subprocesso real
-  `bun run scripts/procedura.ts`.
-- Consequência prática: `git fetch upstream && git merge upstream/main` continua
-  trivial, porque não há sobreposição de arquivos.
+## Reutilização e adaptações
 
-## Diferenças deliberadas em relação ao Studio upstream
+O laboratório importa a fila `web/server/jobs.ts`, scanner `scan.ts`, customizador `customize.ts`, tipos e guardas do Studio. Geração usa o subprocesso real `bun run scripts/procedura.ts`; OpenSCAD produz a geometria e Blender renderiza por scripts Python.
 
-| Diferença | Motivo |
-|---|---|
-| O servidor do laboratório escuta em `127.0.0.1` | O Studio upstream escuta em `0.0.0.0` sem autenticação, expondo leitura/escrita de arquivos e execução de processos |
-| Os caminhos de OpenSCAD e Blender são sondados no Windows e injetados no processo filho | O upstream só procura em `$HOME/opt`, `/usr/local/bin` e `/opt` |
-| Porta separada (`8770`) | Os dois servidores podem rodar lado a lado |
+As primeiras adaptações viviam somente em `lab3d/`. Esta continuidade corrige também arquivos upstream, em commits próprios:
 
-Comece por [lab3d/README.md](lab3d/README.md).
+- `src/runtime/`: descoberta Windows/Linux e encerramento de workers.
+- `src/scad/compile.ts` e `src/render/*.ts`: caminhos Windows, subprocessos e falhas reais.
+- `web/server/customize.ts`: cache dependente da fonte, publicação após sucesso e timeout.
+- `web/server/jobs.ts`: diretórios reservados na fila, logs persistidos, cancelamento e opções efetivas.
+- `web/shared/types.ts`: opção de exportar STL.
+
+O frontend do laboratório adiciona contrato, revisão de referência, histórico por personagem e resultados independentes. Seu Three.js é um **visualizador de OBJ/MTL/STL**, não um construtor manual de personagens.
+
+## Atualizações upstream
+
+`git fetch upstream` e revisão de `git log HEAD..upstream/main` permitem avaliar novidades. Integre por merge ou commits revisados, conservando ambos os históricos. Alterações nos arquivos acima podem exigir resolução de conflitos e repetição dos testes; não se promete merge automático.
+
+O uso local e os limites validados estão em [lab3d/README.md](lab3d/README.md). As dependências mantêm suas próprias licenças.

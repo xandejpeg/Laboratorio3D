@@ -522,6 +522,8 @@ export interface JobOptions {
   /** --assembly: mating-feature library + prompt. */
   assembly?: boolean;
   paint?: boolean;
+  /** Also export binary STL from the real pipeline. */
+  exportStl?: boolean;
   motion?: boolean;
   motionUrdf?: boolean;
 }

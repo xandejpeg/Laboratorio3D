@@ -12,7 +12,7 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
 export interface ViewerHandle {
-  load(url: string): Promise<{ triangles: number; size: THREE.Vector3 }>;
+  load(url: string, mtlUrl?: string | null): Promise<{ triangles: number; size: THREE.Vector3; materials: number }>;
   clear(): void;
   setView(view: "front" | "left" | "right" | "back" | "top"): void;
   dispose(): void;
@@ -47,6 +47,9 @@ export function createViewer(host: HTMLElement): ViewerHandle {
 
   let current: THREE.Object3D | null = null;
   let radius = 2;
+  let loadVersion = 0;
+  let pending: AbortController | null = null;
+  let modelSize = new THREE.Vector3(1, 2, 1);
 
   const material = new THREE.MeshStandardMaterial({ color: 0xb9c2cf, roughness: 0.72, metalness: 0.05 });
 
@@ -56,6 +59,7 @@ export function createViewer(host: HTMLElement): ViewerHandle {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    radius = Math.max(modelSize.y, modelSize.x / camera.aspect) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) + modelSize.z / 2 + 0.3;
   }
 
   const observer = new ResizeObserver(resize);
@@ -72,13 +76,20 @@ export function createViewer(host: HTMLElement): ViewerHandle {
   tick();
 
   function disposeObject(obj: THREE.Object3D): void {
+    const disposed = new Set<THREE.Material>();
     obj.traverse((child) => {
       const mesh = child as THREE.Mesh;
       if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.material) for (const mat of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        if (mat !== material && !disposed.has(mat)) { mat.dispose(); disposed.add(mat); }
+      }
     });
   }
 
   function clear(): void {
+    loadVersion++;
+    pending?.abort();
+    pending = null;
     if (!current) return;
     scene.remove(current);
     disposeObject(current);
@@ -86,38 +97,48 @@ export function createViewer(host: HTMLElement): ViewerHandle {
   }
 
   /** Centre on the origin and scale so the longest axis spans 2 units. */
-  function frame(object: THREE.Object3D): { triangles: number; size: THREE.Vector3 } {
+  function frame(object: THREE.Object3D): { triangles: number; size: THREE.Vector3; materials: number } {
+    // OpenSCAD and the upstream Blender exports use Z-up, as in Studio.
+    object.rotateX(-Math.PI / 2);
+    object.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(object);
     const size = box.getSize(new THREE.Vector3());
     const centre = box.getCenter(new THREE.Vector3());
-    const longest = Math.max(size.x, size.y, size.z) || 1;
+    const longest = Math.max(size.x, size.y, size.z);
+    if (!Number.isFinite(longest) || longest <= 0) throw new Error("O arquivo não contém geometria 3D válida.");
     const scale = 2 / longest;
     object.position.sub(centre);
-    object.scale.setScalar(scale);
     const wrapper = new THREE.Group();
     wrapper.add(object);
+    wrapper.scale.setScalar(scale);
     scene.add(wrapper);
     current = wrapper;
 
     let triangles = 0;
+    const materials = new Set<THREE.Material>();
     object.traverse((child) => {
       const mesh = child as THREE.Mesh;
       const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
       if (!geometry) return;
+      for (const mat of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        if (mat !== material) materials.add(mat);
+      }
       triangles += geometry.index ? geometry.index.count / 3 : (geometry.getAttribute("position")?.count ?? 0) / 3;
     });
 
-    radius = 2.6;
+    modelSize = size.clone().multiplyScalar(scale);
+    grid.position.y = -modelSize.y / 2 - 0.025;
+    resize();
     setView("front");
-    return { triangles: Math.round(triangles), size };
+    return { triangles: Math.round(triangles), size, materials: materials.size };
   }
 
   function setView(view: "front" | "left" | "right" | "back" | "top"): void {
     const positions: Record<typeof view, [number, number, number]> = {
-      front: [0, 0.2, radius],
-      back: [0, 0.2, -radius],
-      left: [-radius, 0.2, 0],
-      right: [radius, 0.2, 0],
+      front: [0, 0, radius],
+      back: [0, 0, -radius],
+      left: [-radius, 0, 0],
+      right: [radius, 0, 0],
       top: [0, radius, 0.001],
     };
     const p = positions[view];
@@ -126,24 +147,67 @@ export function createViewer(host: HTMLElement): ViewerHandle {
     controls.update();
   }
 
-  async function load(url: string): Promise<{ triangles: number; size: THREE.Vector3 }> {
+  async function load(url: string, mtlUrl?: string | null): Promise<{ triangles: number; size: THREE.Vector3; materials: number }> {
     clear();
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`could not fetch the mesh (HTTP ${response.status})`);
+    const version = loadVersion;
+    const controller = new AbortController();
+    pending = controller;
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`Não foi possível carregar a malha (HTTP ${response.status}).`);
     const buffer = await response.arrayBuffer();
-    if (url.toLowerCase().includes(".stl")) {
+    const assertCurrent = () => {
+      if (version !== loadVersion || !running) throw new DOMException("Carregamento substituído.", "AbortError");
+    };
+    assertCurrent();
+    const meshPath = new URL(url, window.location.href).searchParams.get("path") ?? url;
+    if (/\.stl$/i.test(meshPath)) {
       const geometry = new STLLoader().parse(buffer);
       geometry.computeVertexNormals();
-      return frame(new THREE.Mesh(geometry, material));
+      const mesh = new THREE.Mesh(geometry, material);
+      try { return frame(mesh); } catch (e) { disposeObject(mesh); throw e; }
     }
+    // Only load the explicit MTL artifact returned by the run scanner. Never
+    // follow external texture URLs embedded in user-provided OBJ/MTL files.
+    const palette = new Map<string, THREE.MeshStandardMaterial>();
+    if (mtlUrl) {
+      const mtl = await fetch(mtlUrl, { signal: controller.signal });
+      if (!mtl.ok) throw new Error(`Não foi possível carregar os materiais (HTTP ${mtl.status}).`);
+      const source = await mtl.text();
+      assertCurrent();
+      let mat: THREE.MeshStandardMaterial | null = null;
+      for (const line of source.split(/\r?\n/)) {
+        const [key, ...parts] = line.trim().split(/\s+/);
+        if (key === "newmtl") {
+          mat = new THREE.MeshStandardMaterial({ roughness: 0.6 });
+          mat.name = parts.join(" ");
+          palette.set(mat.name, mat);
+        } else if (mat) {
+          const numbers = parts.map(Number);
+          if (!numbers.every(Number.isFinite)) continue;
+          if (key === "Kd" && numbers.length >= 3) mat.color.setRGB(numbers[0]!, numbers[1]!, numbers[2]!, THREE.SRGBColorSpace);
+          if (key === "Pr") mat.roughness = THREE.MathUtils.clamp(numbers[0] ?? 0.6, 0.05, 1);
+          if (key === "Pm") mat.metalness = THREE.MathUtils.clamp(numbers[0] ?? 0, 0, 1);
+          if (key === "d") { mat.opacity = THREE.MathUtils.clamp(numbers[0] ?? 1, 0, 1); mat.transparent = mat.opacity < 1; }
+        }
+      }
+    }
+    assertCurrent();
     const object = new OBJLoader().parse(new TextDecoder().decode(buffer));
+    const used = new Set<THREE.Material>();
     object.traverse((child) => {
       const mesh = child as THREE.Mesh;
       if (!mesh.isMesh) return;
-      mesh.material = material;
+      const replace = (old: THREE.Material) => {
+        const next = palette.get(old.name) ?? material;
+        old.dispose();
+        used.add(next);
+        return next;
+      };
+      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(replace) : replace(mesh.material);
       if (mesh.geometry && !mesh.geometry.getAttribute("normal")) mesh.geometry.computeVertexNormals();
     });
-    return frame(object);
+    for (const mat of palette.values()) if (!used.has(mat)) mat.dispose();
+    try { return frame(object); } catch (e) { disposeObject(object); throw e; }
   }
 
   return {
@@ -154,6 +218,7 @@ export function createViewer(host: HTMLElement): ViewerHandle {
       running = false;
       observer.disconnect();
       clear();
+      material.dispose();
       controls.dispose();
       renderer.dispose();
       renderer.domElement.remove();

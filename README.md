@@ -1,3 +1,9 @@
+# Laboratorio3D
+
+Laboratório local de importação de personagens 2D e geração por código, fundado no **Procedura**. Consulte o [guia do laboratório](lab3d/README.md), o [contrato PNG + JSON](lab3d/docs/CONTRACT.md) e o [estado validado do primeiro marco](lab3d/docs/MILESTONE_1.md).
+
+O histórico e a licença MIT do Procedura foram preservados. A [atribuição](ATTRIBUTION.md) registra o commit de origem e as adaptações. A apresentação upstream segue abaixo.
+
 <div align="center">
 
 <img src="assets/wordmark.png" alt="Procedura" width="360">

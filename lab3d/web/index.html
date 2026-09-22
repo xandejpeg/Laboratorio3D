@@ -30,7 +30,7 @@
             </label>
             <label class="field">
               <span>PNG frontal <em>obrigatório</em></span>
-              <input type="file" name="front" accept="image/png,image/jpeg,image/webp" required />
+              <input type="file" name="front" accept="image/png,.png" required />
             </label>
             <details class="extra">
               <summary>Referências adicionais (opcional)</summary>
@@ -48,19 +48,29 @@
             </label>
             <button type="submit" class="primary">Importar</button>
           </form>
-          <div id="import-status" class="status"></div>
+          <div id="import-status" class="status" role="status" aria-live="polite"></div>
         </section>
 
         <section class="card">
           <h2>Personagens importados</h2>
           <ul id="character-list" class="list"></ul>
         </section>
+        <section class="card">
+          <div class="card-head">
+            <h2>Resultados independentes</h2>
+            <button id="refresh-independent" class="ghost" type="button">Atualizar</button>
+          </div>
+          <p class="hint">Ensaios e modelos sem personagem 2D associado. A origem e o processo usado aparecem nas evidências.</p>
+          <ul id="independent-list" class="list"></ul>
+        </section>
       </aside>
 
       <section class="column column-main">
         <div id="empty" class="card empty">
-          Importe um personagem ou selecione um já importado para ver a ficha, o resumo enviado ao
-          pipeline e os resultados.
+          <span class="eyebrow">Seu laboratório de personagens</span>
+          <h1>Da referência à geometria.</h1>
+          <p>Importe a imagem frontal e a ficha do gerador 2D. Confira os atributos, acompanhe a geração e compare os arquivos produzidos com a referência.</p>
+          <div class="empty-steps"><span>01 · Importe PNG + JSON</span><span>02 · Confira o personagem</span><span>03 · Gere e avalie a malha</span></div>
         </div>
 
         <div id="character-panel" hidden>
@@ -69,20 +79,22 @@
               <h2 id="character-name">—</h2>
               <code id="character-key" class="key"></code>
             </div>
-            <div class="compare">
-              <figure>
+            <div id="independent-note" class="note info" hidden>Resultado independente, sem personagem 2D associado. A visualização não estabelece fidelidade a uma referência de personagem.</div>
+            <div id="comparison" class="compare">
+              <figure class="character-only">
                 <figcaption>Referência 2D (autoridade)</figcaption>
                 <div class="ref-box"><img id="ref-image" alt="referência frontal do personagem" /></div>
               </figure>
               <figure>
                 <figcaption>
-                  Modelo gerado
+                  Geometria produzida
                   <span id="mesh-info" class="muted"></span>
                 </figcaption>
                 <div class="ref-box viewer-box">
-                  <div id="viewer"></div>
+                  <div id="viewer" aria-label="Visualizador 3D interativo"></div>
                   <div id="viewer-empty" class="viewer-empty">nenhuma malha carregada</div>
                 </div>
+                <p class="hint viewer-help">Arraste para girar · role para aproximar · botão direito para deslocar. Os materiais MTL preservam as cores disponíveis; o visor não reproduz todos os efeitos do Blender.</p>
                 <div class="views">
                   <button data-view="front">Frente</button>
                   <button data-view="left">Perfil E</button>
@@ -94,12 +106,12 @@
             </div>
           </section>
 
-          <section class="card">
+          <section class="card character-only">
             <h2>2 · Ficha recebida</h2>
             <div id="facts"></div>
           </section>
 
-          <section class="card">
+          <section class="card character-only">
             <h2>3 · O que o pipeline vai receber</h2>
             <div id="brief-warnings"></div>
             <details>
@@ -108,7 +120,7 @@
             </details>
           </section>
 
-          <section class="card">
+          <section class="card character-only">
             <h2>4 · Executar</h2>
             <div class="actions">
               <div class="action">
@@ -123,7 +135,8 @@
                 </label>
                 <label class="inline"><input id="opt-paint" type="checkbox" /> Pintar materiais (fase extra)</label>
                 <label class="inline"><input id="opt-context" type="checkbox" /> Renders de contexto por peça (mais lento)</label>
-                <button id="generate" class="primary">Gerar</button>
+                <button id="generate" class="primary" disabled>Gerar modelo</button>
+                <p id="generation-availability" class="hint small availability"></p>
               </div>
               <div class="action">
                 <strong>Recompilar parâmetros</strong>
@@ -135,22 +148,22 @@
               </div>
               <div class="action">
                 <strong>Visualizar pronto</strong>
-                <p class="hint small">Abre um resultado existente sem executar nada.</p>
-                <select id="ready-run"></select>
-                <button id="open-ready">Abrir</button>
+                <p class="hint small">Abre uma malha vinculada a este personagem, sem executar o pipeline.</p>
+                <select id="ready-run" aria-label="Resultado pronto deste personagem"></select>
+                <button id="open-ready" disabled>Abrir resultado</button>
               </div>
             </div>
-            <div id="generate-status" class="status"></div>
+            <div id="generate-status" class="status" role="status" aria-live="polite"></div>
           </section>
 
-          <section class="card">
+          <section class="card character-only">
             <h2>5 · Execuções deste personagem</h2>
             <ul id="run-list" class="list"></ul>
           </section>
 
           <section class="card" id="progress-card" hidden>
             <h2>Progresso</h2>
-            <div id="progress-summary" class="progress-summary"></div>
+            <div id="progress-summary" class="progress-summary" role="status" aria-live="polite"></div>
             <button id="cancel-job" class="ghost">Cancelar execução</button>
             <details open>
               <summary>Log do processo</summary>
@@ -161,6 +174,10 @@
           <section class="card" id="result-card" hidden>
             <h2>Resultado</h2>
             <div id="result-verdict"></div>
+            <div id="result-evidence"></div>
+            <h3>Renders produzidos</h3>
+            <p class="hint">As imagens abaixo pertencem à execução aberta. Vistas sem referência externa são regiões inferidas.</p>
+            <div id="render-list" class="render-list"></div>
             <h3>Arquivos exportados</h3>
             <ul id="file-list" class="list files"></ul>
             <h3>Parâmetros suportados</h3>

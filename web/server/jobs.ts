@@ -13,6 +13,7 @@
  */
 
 import {
+  appendFileSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -22,6 +23,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { extname, join } from "node:path";
+import { stopProcessTree } from "../../src/runtime/process.ts";
 
 import type {
   JobDetail,
@@ -89,10 +91,13 @@ export class JobManager {
     while (existsSync(join(this.opts.root, runId))) {
       runId = `${slug}-${id.slice(4)}-${Math.random().toString(36).slice(2, 5)}`;
     }
+    // Reserve the directory even while queued, so provenance can be frozen
+    // before execution and callers never lose metadata behind a running job.
+    mkdirSync(join(this.opts.root, runId), { recursive: true });
     const job: LiveJob = {
       id,
       prompt,
-      options,
+      options: { maxSteps: this.opts.defaultMaxSteps, ...options },
       runId,
       status: "queued",
       createdAt: Date.now(),
@@ -158,15 +163,15 @@ export class JobManager {
       job.status = "canceled"; // exit handler will respect this
       const proc = job.proc;
       const pid = proc.pid;
-      proc.kill(); // SIGTERM the bun child
-      killChildren(pid, 15); // best-effort: TERM grandchildren (openscad/blender)
+      // Kill descendants while the owning parent still exists (Windows /T).
+      stopProcessTree(pid);
       job.killTimer = setTimeout(() => {
         try {
           proc.kill(9);
         } catch {
           /* already gone */
         }
-        killChildren(pid, 9);
+        stopProcessTree(pid);
       }, 4000);
       return true;
     }
@@ -209,6 +214,7 @@ export class JobManager {
       if (o.contextRenders) args.push("--3d-feedback");
       if (o.assembly) args.push("--assembly");
       if (o.paint) args.push("--paint");
+      if (o.exportStl) args.push("--export-stl");
       if (o.motion) args.push("--motion");
       if (o.motionUrdf) args.push("--motion-urdf");
       if (o.maxSteps != null) args.push("--max-steps", String(o.maxSteps));
@@ -242,14 +248,17 @@ export class JobManager {
     this.persist(job);
     this.emit(job, { type: "status", job: this.record(job) });
 
-    void pumpLines(proc.stdout as ReadableStream<Uint8Array>, (l) => this.appendLog(job, l));
-    void pumpLines(proc.stderr as ReadableStream<Uint8Array>, (l) => this.appendLog(job, l));
+    const logsDrained = Promise.all([
+      pumpLines(proc.stdout as ReadableStream<Uint8Array>, (l) => this.appendLog(job, l)),
+      pumpLines(proc.stderr as ReadableStream<Uint8Array>, (l) => this.appendLog(job, l)),
+    ]);
 
     const ticker = setInterval(() => {
       this.emit(job, { type: "progress", progress: this.progress(job) });
     }, 1500);
 
-    void proc.exited.then((code) => {
+    void proc.exited.then(async (code) => {
+      await logsDrained;
       clearInterval(ticker);
       if (job.killTimer) clearTimeout(job.killTimer);
       job.killTimer = undefined;
@@ -282,7 +291,11 @@ export class JobManager {
   }
 
   private appendLog(job: LiveJob, line: string): void {
-    job.log.push(line.length > LINE_CAP ? line.slice(0, LINE_CAP) + " …[truncated]" : line);
+    line = line.length > LINE_CAP ? line.slice(0, LINE_CAP) + " …[truncated]" : line;
+    job.log.push(line);
+    try {
+      appendFileSync(join(this.jobsDir(), `${job.id}.log`), line + "\n", "utf8");
+    } catch { /* Logging must not prevent the exit record from being saved. */ }
     if (job.log.length > LOG_CAP) job.log.splice(0, job.log.length - LOG_CAP);
     this.emit(job, { type: "log", line });
   }
@@ -392,7 +405,7 @@ export class JobManager {
   }
 
   private record(job: LiveJob): JobRecord {
-    const { proc: _proc, log: _log, subscribers: _subs, ...rest } = job;
+    const { proc: _proc, killTimer: _timer, log: _log, subscribers: _subs, ...rest } = job;
     void _proc;
     void _log;
     void _subs;
@@ -448,7 +461,9 @@ export class JobManager {
     }
     records.sort((a, b) => a.createdAt - b.createdAt);
     for (const rec of records) {
-      this.jobs.set(rec.id, { ...rec, log: [], subscribers: new Set() });
+      let log: string[] = [];
+      try { log = readFileSync(join(dir, `${rec.id}.log`), "utf8").trimEnd().split("\n").slice(-LOG_CAP); } catch {}
+      this.jobs.set(rec.id, { ...rec, log, subscribers: new Set() });
       this.order.push(rec.id);
     }
     this.evictOld();
@@ -456,16 +471,6 @@ export class JobManager {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-/** Best-effort: signal the direct children of `pid` (the pipeline's openscad /
- *  blender subprocesses) so a canceled job doesn't leave orphaned compute. */
-function killChildren(pid: number, signal: number): void {
-  try {
-    Bun.spawnSync(["pkill", `-${signal}`, "-P", String(pid)]);
-  } catch {
-    /* pkill unavailable — the parent kill is the primary mechanism */
-  }
-}
 
 async function pumpLines(
   stream: ReadableStream<Uint8Array>,

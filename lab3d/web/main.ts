@@ -173,6 +173,53 @@ let viewer: ViewerHandle | null = null;
 let activeStream: EventSource | null = null;
 let activeJobId: string | null = null;
 let shownRunId: string | null = null;
+let selectionVersion = 0;
+let runVersion = 0;
+let readyVersion = 0;
+let generationPending = false;
+let independentMode = false;
+let independentListVersion = 0;
+
+function setIndependentMode(independent: boolean): void {
+  independentMode = independent;
+  for (const node of document.querySelectorAll<HTMLElement>(".character-only")) node.hidden = independent;
+  $("#independent-note").hidden = !independent;
+  $("#comparison").classList.toggle("independent", independent);
+}
+
+const statusLabel = (status: string): string => ({
+  queued: "na fila", running: "em execução", canceled: "cancelada", failed: "falhou",
+  succeeded: "processo concluído", interrupted: "interrompida", complete: "concluída",
+  partial: "parcial", empty: "sem artefatos",
+}[status] ?? status);
+
+const fileUrl = (path: string): string => `/api/file?path=${encodeURIComponent(path)}`;
+
+function resetResult(message = "Nenhuma malha carregada para este personagem."): void {
+  runVersion++;
+  shownRunId = null;
+  viewer?.clear();
+  $("#viewer-empty").hidden = false;
+  $("#viewer-empty").textContent = message;
+  $("#mesh-info").textContent = "";
+  $("#result-card").hidden = true;
+  $("#result-verdict").replaceChildren();
+  $("#result-evidence").replaceChildren();
+  $("#file-list").replaceChildren();
+  $("#render-list").replaceChildren();
+  $("#params").replaceChildren();
+  for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-view]")) button.disabled = true;
+}
+
+function updateGenerationAvailability(): void {
+  const available = !!selected && !!runtime?.capabilities.generate && !!runtime.generationEnabled;
+  $<HTMLButtonElement>("#generate").disabled = generationPending || !available;
+  $("#generation-availability").textContent = available
+    ? "Geração usa o provedor configurado e pode gerar custos."
+    : runtime?.capabilities.generate
+      ? "Geração desativada neste ambiente. Configure a autorização de geração no servidor."
+      : "Geração indisponível. Confira os requisitos e a configuração do provedor no estado do ambiente.";
+}
 
 // ── runtime banner ──────────────────────────────────────────────────────────
 
@@ -198,6 +245,7 @@ async function loadRuntime(): Promise<void> {
   );
   const notes = [...runtime.openscad.notes, ...runtime.blender.notes, ...runtime.llm.notes];
   if (notes.length) box.append(el("div", { textContent: notes.join(" ") }));
+  updateGenerationAvailability();
 }
 
 // ── import ──────────────────────────────────────────────────────────────────
@@ -266,7 +314,14 @@ async function refreshCharacters(): Promise<void> {
         }),
         el("div", { className: "meta" }, [el("code", { textContent: c.shortKey })]),
       ]);
+      item.tabIndex = 0;
+      item.setAttribute("role", "button");
+      item.setAttribute("aria-label", `Selecionar ${c.name}`);
+      item.setAttribute("aria-pressed", String(selected?.record.key === c.key));
       item.addEventListener("click", () => void selectCharacter(c.key));
+      item.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void selectCharacter(c.key); }
+      });
       return item;
     }),
   );
@@ -275,35 +330,98 @@ async function refreshCharacters(): Promise<void> {
 // ── character detail ────────────────────────────────────────────────────────
 
 async function selectCharacter(key: string): Promise<void> {
-  const data = await api<{ record: CharacterRecord; brief: Brief; runs: CharacterRun[] }>(
-    `/api/lab/character?key=${encodeURIComponent(key)}`,
-  );
-  selected = data;
+  const version = ++selectionVersion;
+  setIndependentMode(false);
+  selected = null;
   closeStream();
-  shownRunId = null;
+  resetResult();
+  $<HTMLSelectElement>("#ready-run").replaceChildren(el("option", { value: "", textContent: "Carregando resultados deste personagem…" }));
+  $<HTMLButtonElement>("#open-ready").disabled = true;
+  updateGenerationAvailability();
+  $("#character-panel").hidden = true;
+  $("#empty").hidden = false;
+  $("#empty").textContent = "Carregando a imagem e a ficha deste personagem…";
+  let data: { record: CharacterRecord; brief: Brief; runs: CharacterRun[] };
+  try {
+    data = await api(`/api/lab/character?key=${encodeURIComponent(key)}`);
+  } catch (e) {
+    if (version === selectionVersion) $("#empty").textContent = `Não foi possível abrir o personagem: ${(e as Error).message}`;
+    return;
+  }
+  if (version !== selectionVersion) return;
+  selected = data;
   $("#empty").hidden = true;
   $("#character-panel").hidden = false;
   $("#progress-card").hidden = true;
   $("#result-card").hidden = true;
+  $("#generate-status").textContent = "";
 
   $("#character-name").textContent = data.record.bundle.name;
   $("#character-key").textContent = data.record.shortKey;
 
   const front = data.record.bundle.references.find((r) => r.authoritative);
   const img = $<HTMLImageElement>("#ref-image");
+  img.alt = `Referência frontal de ${data.record.bundle.name}`;
   img.src = front ? `/api/lab/asset?key=${encodeURIComponent(key)}&file=${encodeURIComponent(front.file)}` : "";
-
-  ensureViewer();
-  viewer?.clear();
-  $("#viewer-empty").hidden = false;
-  $("#mesh-info").textContent = "";
 
   renderFacts(data.record, data.brief);
   renderBriefWarnings(data.record, data.brief);
   $("#brief-text").textContent = data.brief.text;
   renderRuns(data.runs);
+  updateGenerationAvailability();
   await refreshReadyRuns();
-  await refreshCharacters();
+  if (version === selectionVersion) await refreshCharacters();
+}
+
+async function refreshIndependentRuns(): Promise<void> {
+  const request = ++independentListVersion;
+  const list = $("#independent-list");
+  try {
+    const { runs } = await api<{ runs: RunSummary[] }>("/api/lab/independent-runs");
+    if (request !== independentListVersion) return;
+    list.replaceChildren(...(runs.length ? runs.map((run) => {
+      const item = el("li", { className: `selectable${independentMode && shownRunId === run.id ? " active" : ""}`, tabIndex: 0 }, [
+        el("strong", { textContent: run.title || run.id }),
+        el("div", { className: "meta", textContent: `${run.id} · ${statusLabel(run.status)}` }),
+      ]);
+      item.setAttribute("role", "button");
+      item.setAttribute("aria-label", `Abrir resultado independente ${run.title || run.id}`);
+      item.addEventListener("click", () => void showIndependentRun(run.id));
+      item.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void showIndependentRun(run.id); }
+      });
+      return item;
+    }) : [el("li", { textContent: "Nenhum resultado independente disponível." })]));
+  } catch (e) {
+    if (request === independentListVersion) list.replaceChildren(el("li", { textContent: `Não foi possível listar resultados: ${(e as Error).message}` }));
+  }
+}
+
+async function showIndependentRun(runId: string): Promise<void> {
+  ++selectionVersion;
+  selected = null;
+  closeStream();
+  resetResult();
+  setIndependentMode(true);
+  const reference = $<HTMLImageElement>("#ref-image");
+  reference.removeAttribute("src");
+  reference.alt = "";
+  $("#facts").replaceChildren();
+  $("#brief-warnings").replaceChildren();
+  $("#brief-text").textContent = "";
+  $("#run-list").replaceChildren();
+  $<HTMLSelectElement>("#ready-run").replaceChildren();
+  $<HTMLButtonElement>("#open-ready").disabled = true;
+  $("#generate-status").textContent = "";
+  $("#progress-card").hidden = true;
+  $("#empty").hidden = true;
+  $("#character-panel").hidden = false;
+  $("#character-name").textContent = "Resultado independente";
+  $("#character-key").textContent = runId;
+  updateGenerationAvailability();
+  void refreshCharacters().catch(() => {});
+  await showRun(runId);
+  void refreshIndependentRuns();
 }
 
 function renderFacts(record: CharacterRecord, brief: Brief): void {
@@ -372,6 +490,7 @@ function renderBriefWarnings(record: CharacterRecord, brief: Brief): void {
   const notes: Node[] = [];
 
   const stored = record.bundle.references.filter((r) => !r.authoritative);
+  const angleLabels: Record<string, string> = { front: "Frente", "profile-left": "Perfil esquerdo", "profile-right": "Perfil direito", back: "Costas" };
   notes.push(
     el("div", { className: "note info" }, [
       el("strong", { textContent: "Referências" }),
@@ -380,6 +499,14 @@ function renderBriefWarnings(record: CharacterRecord, brief: Brief): void {
           `1 imagem entra na geração (frontal). ${stored.length} referência(s) adicional(is) está(ão) guardada(s) ` +
           "e rotulada(s), mas NÃO influencia(m) o pipeline: o gerador upstream recebe uma única imagem.",
       }),
+      el("ul", {}, record.bundle.references.map((reference) => el("li", {}, [
+        el("a", {
+          href: `/api/lab/asset?key=${encodeURIComponent(record.key)}&file=${encodeURIComponent(reference.file)}`,
+          target: "_blank", rel: "noopener",
+          textContent: angleLabels[reference.angle] ?? reference.angle,
+        }),
+        ` · ${reference.width ?? "?"}×${reference.height ?? "?"} · ${reference.influence === "pipeline" ? "usada pelo pipeline" : "guardada; sem influência na geração"}`,
+      ]))),
     ]),
   );
 
@@ -433,6 +560,7 @@ function renderRuns(runs: CharacterRun[]): void {
       const open = el("button", { textContent: "Abrir resultado", className: "ghost" });
       open.addEventListener("click", () => void showRun(run.runId));
       const follow = el("button", { textContent: "Acompanhar", className: "ghost" });
+      follow.disabled = !run.jobId || run.purpose === "recompile";
       follow.addEventListener("click", () => followJob(run.jobId));
       return el("li", {}, [
         el("div", { className: "row" }, [
@@ -453,34 +581,47 @@ function wireGenerate(): void {
   const status = $("#generate-status");
   button.addEventListener("click", async () => {
     if (!selected) return;
-    button.disabled = true;
+    const character = selected;
+    const version = selectionVersion;
+    generationPending = true;
+    updateGenerationAvailability();
     setStatus(status, "enfileirando execução…");
     try {
       const body = {
-        key: selected.record.key,
+        key: character.record.key,
         maxSteps: Number($<HTMLInputElement>("#max-steps").value),
         paint: $<HTMLInputElement>("#opt-paint").checked,
         contextRenders: $<HTMLInputElement>("#opt-context").checked,
       };
+      if (!Number.isInteger(body.maxSteps) || body.maxSteps < 0 || body.maxSteps > 20) throw new Error("Informe de 0 a 20 ciclos de refino.");
       const result = await api<{ job: JobRecord; run: CharacterRun }>("/api/lab/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      setStatus(status, `Execução ${result.job.runId} enfileirada. Isto leva minutos.`, "ok");
-      selected.runs.push(result.run);
-      renderRuns(selected.runs);
-      followJob(result.job.id);
+      if (version === selectionVersion && selected === character) {
+        setStatus(status, `Execução ${result.job.runId} enfileirada. Isto leva minutos.`, "ok");
+        character.runs.push(result.run);
+        renderRuns(character.runs);
+        followJob(result.job.id);
+      }
+      await refreshCharacters();
     } catch (e) {
-      setStatus(status, (e as Error).message, "error");
+      if (version === selectionVersion) setStatus(status, (e as Error).message, "error");
     } finally {
-      button.disabled = false;
+      generationPending = false;
+      updateGenerationAvailability();
     }
   });
 
   $("#cancel-job").addEventListener("click", async () => {
     if (!activeJobId) return;
-    await api(`/api/jobs/cancel?id=${encodeURIComponent(activeJobId)}`, { method: "POST" });
+    const jobId = activeJobId;
+    try {
+      await api(`/api/jobs/cancel?id=${encodeURIComponent(jobId)}`, { method: "POST" });
+    } catch (e) {
+      if (activeJobId === jobId) setStatus($("#generate-status"), `Falha ao cancelar: ${(e as Error).message}`, "error");
+    }
   });
 
   $("#open-ready").addEventListener("click", () => {
@@ -489,8 +630,12 @@ function wireGenerate(): void {
   });
 }
 
-/** Every run already on disk, so a finished model can be opened without executing anything. */
+/** Only runs bound to the selected immutable import may share its reference. */
 async function refreshReadyRuns(): Promise<void> {
+  const request = ++readyVersion;
+  const character = selected;
+  const version = selectionVersion;
+  if (!character) return;
   const select = $<HTMLSelectElement>("#ready-run");
   let runs: RunSummary[] = [];
   try {
@@ -498,14 +643,18 @@ async function refreshReadyRuns(): Promise<void> {
   } catch {
     /* the runs root may not exist yet */
   }
-  const withMesh = runs.filter((r) => r.hasFinalMesh || r.hasDraftMesh);
+  if (request !== readyVersion || version !== selectionVersion || selected !== character) return;
+  const ownIds = new Set(character.runs.map((r) => r.runId));
+  const withMesh = runs.filter((r) => ownIds.has(r.id) && (r.hasFinalMesh || r.hasDraftMesh));
+  const preferredId = shownRunId ?? select.value;
   select.replaceChildren(
     ...(withMesh.length
       ? withMesh.map((run) =>
           el("option", { value: run.id, textContent: `${run.id} — ${run.title || run.status}`.slice(0, 80) }),
         )
-      : [el("option", { value: "", textContent: "nenhum resultado com malha ainda" })]),
+      : [el("option", { value: "", textContent: "este personagem ainda não tem malha" })]),
   );
+  if (withMesh.some((run) => run.id === preferredId)) select.value = preferredId;
   $<HTMLButtonElement>("#open-ready").disabled = !withMesh.length;
 }
 
@@ -513,9 +662,14 @@ function closeStream(): void {
   activeStream?.close();
   activeStream = null;
   activeJobId = null;
+  lastProgress = null;
+  lastJob = null;
 }
 
 function followJob(jobId: string): void {
+  const character = selected;
+  if (!character?.runs.some((run) => run.jobId === jobId)) return;
+  const version = selectionVersion;
   closeStream();
   activeJobId = jobId;
   $("#progress-card").hidden = false;
@@ -523,21 +677,26 @@ function followJob(jobId: string): void {
   log.textContent = "";
   const summary = $("#progress-summary");
   summary.replaceChildren(el("span", { className: "chip", textContent: "conectando…" }));
+  $<HTMLButtonElement>("#cancel-job").disabled = true;
 
   const source = new EventSource(`/api/jobs/stream?id=${encodeURIComponent(jobId)}`);
   activeStream = source;
   let runId: string | null = null;
 
   source.addEventListener("message", (event) => {
-    const ev = JSON.parse((event as MessageEvent<string>).data) as {
+    if (activeStream !== source || version !== selectionVersion || selected !== character) return;
+    let ev: {
       type: string; job?: JobRecord; progress?: JobProgress; line?: string;
     };
+    try { ev = JSON.parse((event as MessageEvent<string>).data) as typeof ev; }
+    catch { return; }
     if (ev.type === "log" && ev.line !== undefined) {
-      log.textContent += `${ev.line}\n`;
+      log.textContent = `${log.textContent ?? ""}${ev.line}\n`.slice(-200_000);
       log.scrollTop = log.scrollHeight;
     }
     if (ev.type === "progress" && ev.progress) renderProgress(ev.progress, null);
     if (ev.type === "status" && ev.job) {
+      if (!character.runs.some((run) => run.runId === ev.job!.runId && run.jobId === jobId)) return;
       runId = ev.job.runId;
       renderProgress(null, ev.job);
       if (ev.job.status !== "running" && ev.job.status !== "queued") {
@@ -550,9 +709,10 @@ function followJob(jobId: string): void {
   source.addEventListener("error", () => {
     // The stream closes itself once the job reaches a terminal state; only
     // report a failure while we still believe the job is live.
-    if (activeStream === source) {
+    if (activeStream === source && version === selectionVersion) {
       summary.append(el("span", { className: "chip", textContent: "conexão de progresso encerrada" }));
       closeStream();
+      $<HTMLButtonElement>("#cancel-job").disabled = true;
       if (runId) void showRun(runId);
     }
   });
@@ -567,7 +727,7 @@ function renderProgress(progress: JobProgress | null, job: JobRecord | null): vo
   const p = lastProgress;
   const j = lastJob;
   const chips: HTMLElement[] = [];
-  if (j) chips.push(el("span", { className: "chip phase", textContent: `status: ${j.status}` }));
+  if (j) chips.push(el("span", { className: "chip phase", textContent: `Estado: ${statusLabel(j.status)}` }));
   if (p) {
     chips.push(el("span", { className: "chip phase", textContent: `fase: ${p.phase}` }));
     chips.push(el("span", { className: `chip${p.hasImage ? " on" : ""}`, textContent: "referência" }));
@@ -590,17 +750,38 @@ function ensureViewer(): void {
 }
 
 async function showRun(runId: string): Promise<void> {
+  const character = selected;
+  const selection = selectionVersion;
+  const independent = independentMode;
+  if (!character && !independent) return;
+  resetResult(independent ? "Conferindo a origem deste resultado independente…" : "Conferindo o vínculo da execução com este personagem…");
+  const version = runVersion;
+  const isCurrent = () => version === runVersion && selection === selectionVersion && selected === character && independentMode === independent;
   shownRunId = runId;
-  const detail = await api<RunDetail>(`/api/run?id=${encodeURIComponent(runId)}`);
-  $("#result-card").hidden = false;
+  try {
+    const binding = await api<{ record: CharacterRecord | null; run: CharacterRun | null }>(
+      `/api/lab/run-character?runId=${encodeURIComponent(runId)}`,
+    );
+    if (!isCurrent()) return;
+    if (independent ? binding.record !== null || binding.run !== null : !character || binding.record?.key !== character.record.key || binding.run?.characterKey !== character.record.key || binding.run?.runId !== runId) {
+      if (independent) throw new Error("Esta execução pertence a um personagem. Abra-a pelo histórico desse personagem.");
+      throw new Error("Esta execução não pertence ao personagem selecionado. A comparação foi bloqueada.");
+    }
+    const detail = await api<RunDetail>(`/api/run?id=${encodeURIComponent(runId)}`);
+    if (!isCurrent()) return;
+    $("#result-card").hidden = false;
+    if (independent) $("#character-key").textContent = detail.id;
 
-  const verdict = $("#result-verdict");
-  const meshPath =
-    detail.painted?.objPath ?? detail.final?.objPath ?? detail.final?.stlPath ?? detail.draft?.objPath ?? detail.draft?.stlPath ?? null;
+    const verdict = $("#result-verdict");
+    const artifact = [detail.painted, detail.final, detail.draft].find((item) => item?.objPath || item?.stlPath);
+    const meshPath = artifact?.objPath ?? artifact?.stlPath ?? null;
+    const stage = artifact === detail.painted ? "Pintura" : artifact === detail.final ? "Final" : "Rascunho";
 
-  verdict.replaceChildren(
+    verdict.replaceChildren(
     el("div", { className: "note info" }, [
-      el("div", { textContent: `Execução ${detail.id} · status do scanner: ${detail.status}` }),
+      el("strong", { textContent: character ? `${character.record.bundle.name} · ${character.record.shortKey}` : "Resultado independente, sem personagem 2D associado" }),
+      el("div", { textContent: `Execução ${detail.id} · ${statusLabel(detail.status)}` }),
+      el("div", { textContent: meshPath ? `${stage} · arquivo exibido: ${meshPath}` : "Esta execução ainda não produziu uma malha." }),
       el("div", {
         textContent: detail.verdict
           ? `Veredito do refino: ${detail.verdict}`
@@ -608,38 +789,79 @@ async function showRun(runId: string): Promise<void> {
       }),
       el("div", {
         textContent:
-          "Uma malha existente não significa aprovação visual. Compare com a referência ao lado antes de considerar o resultado utilizável.",
+          independent ? "Uma malha existente não significa aprovação visual. Consulte a origem, as configurações e os arquivos deste ensaio." : "Uma malha existente não significa aprovação visual. Compare com a referência ao lado antes de considerar o resultado utilizável.",
       }),
     ]),
-  );
+    );
+    if (detail.finalSummary) verdict.append(el("details", {}, [
+      el("summary", { textContent: "Resumo registrado pelo pipeline" }),
+      el("pre", { className: "pre", textContent: detail.finalSummary }),
+    ]));
+    renderFiles(detail);
+    void renderEvidence(runId, isCurrent);
+    void renderParams(runId, isCurrent, artifact === detail.draft ? "draft" : "final");
 
-  ensureViewer();
-  const info = $("#mesh-info");
-  if (!meshPath) {
+    const info = $("#mesh-info");
+    if (!meshPath) {
+      $("#viewer-empty").textContent = "Esta execução não produziu malha.";
+    } else {
+      ensureViewer();
+      $("#viewer-empty").textContent = "Carregando o arquivo de geometria…";
+      const result = await viewer!.load(fileUrl(meshPath), artifact?.mtlPath ? fileUrl(artifact.mtlPath) : null);
+      if (!isCurrent()) return;
+      $("#viewer-empty").hidden = true;
+      info.textContent = `${result.triangles.toLocaleString("pt-BR")} triângulos · ${stage.toLowerCase()}${result.materials ? ` · ${result.materials} materiais` : " · material neutro"}`;
+      for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-view]")) button.disabled = false;
+    }
+  } catch (e) {
+    if (!isCurrent()) return;
     viewer?.clear();
     $("#viewer-empty").hidden = false;
-    info.textContent = "esta execução não produziu malha";
-  } else {
-    try {
-      const result = await viewer!.load(`/api/file?path=${encodeURIComponent(meshPath)}`);
-      $("#viewer-empty").hidden = true;
-      info.textContent = `${result.triangles.toLocaleString()} triângulos · ${meshPath.split("/").pop()}`;
-    } catch (e) {
-      $("#viewer-empty").hidden = false;
-      info.textContent = `falha ao carregar a malha: ${(e as Error).message}`;
-    }
+    $("#viewer-empty").textContent = (e as Error).message;
+    setStatus($("#generate-status"), `Não foi possível abrir o resultado: ${(e as Error).message}`, "error");
   }
+}
 
-  renderFiles(detail);
-  await renderParams(runId);
+async function renderEvidence(runId: string, isCurrent: () => boolean): Promise<void> {
+  const host = $("#result-evidence");
+  try {
+    const data = await api<{
+      purpose: string;
+      quality: { approval: string; verdict: string | null; stage: "draft"; finalSummary: string | null; omittedParts: string[]; floaterParts: string[]; errors: string[] };
+      elapsedMs: number | null;
+      usage: { inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
+      configuration: unknown;
+      artifacts: { path: string; sha256: string; bytes: number }[];
+    }>(`/api/lab/evidence?runId=${encodeURIComponent(runId)}`);
+    if (!isCurrent()) return;
+    const quality = data.quality;
+    const purpose = ({ generate: "Geração pelo pipeline Procedura", recompile: "Recompilação local de parâmetros, sem IA", "offline-compile": "Ensaio local: SCAD manual compilado, sem geração por IA" } as Record<string, string>)[data.purpose] ?? data.purpose;
+    host.replaceChildren(el("div", { className: "note warn" }, [
+      el("strong", { textContent: "Aprovação visual: revisão humana pendente" }),
+      el("div", { textContent: `Processo: ${purpose}.` }),
+      el("div", { textContent: `Tempo registrado: ${data.elapsedMs === null ? "não disponível" : `${(data.elapsedMs / 1000).toFixed(1)} s`}. Tokens: entrada ${data.usage.inputTokens ?? "não disponível"}, saída ${data.usage.outputTokens ?? "não disponível"}. Custo: ${data.usage.costUsd === null ? "não informado pelo provedor" : `US$ ${data.usage.costUsd}`}.` }),
+      el("div", { textContent: `No rascunho — peças omitidas: ${quality.omittedParts.join(", ") || "nenhuma registrada"}; peças soltas: ${quality.floaterParts.join(", ") || "nenhuma registrada"}.` }),
+      el("div", { textContent: "Esses registros são da montagem inicial. O refino pode alterar as peças e a conectividade; eles não validam a malha final." }),
+      ...(quality.errors.length ? [el("ul", {}, quality.errors.map((error) => el("li", { textContent: error })))] : []),
+    ]), ...(quality.finalSummary ? [el("details", {}, [
+      el("summary", { textContent: "Evidência final registrada pelo pipeline" }),
+      el("pre", { className: "pre", textContent: quality.finalSummary }),
+    ])] : [el("div", { className: "note info", textContent: "Nenhum resumo final registrado. A conectividade final não foi confirmada por estas evidências." })]), el("details", {}, [
+      el("summary", { textContent: "Configuração e hashes dos artefatos" }),
+      el("pre", { className: "pre", textContent: JSON.stringify({ configuration: data.configuration, artifacts: data.artifacts }, null, 2) }),
+    ]));
+  } catch (e) {
+    if (isCurrent()) host.replaceChildren(el("div", { className: "note info", textContent: `Registro de evidências indisponível: ${(e as Error).message}` }));
+  }
 }
 
 function renderFiles(detail: RunDetail): void {
   const list = $("#file-list");
-  const deliverables = detail.files.filter(
-    (f) => f.kind === "mesh" || f.kind === "scad" || /final_summary|final_materials|\.mtl$/.test(f.path),
-  );
-  const shown = deliverables.length ? deliverables : detail.files.slice(0, 40);
+  const shown = detail.files;
+  const renders = detail.files.filter((file) => /\.(png|jpe?g|webp)$/i.test(file.path));
+  $("#render-list").replaceChildren(...renders.map((file) => el("a", {
+    href: fileUrl(file.path), target: "_blank", rel: "noopener",
+  }, [el("img", { src: fileUrl(file.path), alt: file.path, loading: "lazy" }), el("span", { textContent: file.path })])));
   if (!shown.length) {
     list.replaceChildren(el("li", { textContent: "nenhum arquivo produzido" }));
     return;
@@ -659,15 +881,17 @@ function renderFiles(detail: RunDetail): void {
   );
 }
 
-async function renderParams(runId: string): Promise<void> {
+async function renderParams(runId: string, isCurrent: () => boolean, which: "draft" | "final"): Promise<void> {
   const host = $("#params");
   let data: { params: ScadParam[]; customizeAvailable: boolean };
   try {
-    data = await api(`/api/params?id=${encodeURIComponent(runId)}&which=final`);
+    data = await api(`/api/params?id=${encodeURIComponent(runId)}&which=${which}`);
   } catch (e) {
+    if (!isCurrent()) return;
     host.replaceChildren(el("div", { className: "note info", textContent: `Sem parâmetros: ${(e as Error).message}` }));
     return;
   }
+  if (!isCurrent()) return;
   if (!data.params.length) {
     host.replaceChildren(
       el("div", {
@@ -697,11 +921,12 @@ async function renderParams(runId: string): Promise<void> {
         value: String(param.value),
         ...(param.min !== undefined ? { min: String(param.min) } : {}),
         ...(param.max !== undefined ? { max: String(param.max) } : {}),
-        ...(param.step !== undefined ? { step: String(param.step) } : {}),
+        ...(param.type === "number" ? { step: param.step === undefined ? "any" : String(param.step) } : {}),
       });
     }
     inputs.set(param.name, field);
-    rows.push(el("div", { className: "param-row" }, [el("label", { textContent: param.name, title: param.name }), field]));
+    field.id = `param-${inputs.size}`;
+    rows.push(el("div", { className: "param-row" }, [el("label", { textContent: param.name, title: param.name, htmlFor: field.id }), field]));
   }
 
   const status = el("div", { className: "status info" });
@@ -714,6 +939,8 @@ async function renderParams(runId: string): Promise<void> {
     status.textContent = "OpenSCAD não encontrado: recompilação indisponível.";
   }
   button.addEventListener("click", async () => {
+    if (!isCurrent() || (!selected && !independentMode)) return;
+    const character = selected;
     button.disabled = true;
     status.className = "status info";
     status.textContent = "recompilando — isto executa o OpenSCAD e pode demorar…";
@@ -722,26 +949,42 @@ async function renderParams(runId: string): Promise<void> {
       for (const param of data.params) {
         const field = inputs.get(param.name);
         if (!field) continue;
+        if (!field.checkValidity()) { field.reportValidity(); throw new Error(`Confira o valor de ${param.name}.`); }
         if (param.type === "boolean") overrides[param.name] = (field as HTMLInputElement).checked;
         else if (param.type === "number" || param.type === "enum-number") overrides[param.name] = Number(field.value);
         else overrides[param.name] = field.value;
       }
-      const result = await api<{ stl: string; durationMs: number; cached: boolean }>("/api/customize", {
+      const result = await api<{ stl: string; durationMs: number; cached: boolean; run: CharacterRun | null; runId: string }>("/api/customize", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: runId, which: "final", overrides }),
+        body: JSON.stringify({ id: runId, ...(character ? { key: character.record.key } : {}), which, overrides }),
       });
+      if (character ? result.run?.characterKey !== character.record.key : result.run !== null) throw new Error("A recompilação retornou um vínculo de personagem inválido.");
+      const outputRunId = result.run?.runId ?? result.runId;
+      if (!outputRunId) throw new Error("A recompilação não informou o identificador do novo resultado.");
+      // Save the new history entry even when the user opened another run while
+      // OpenSCAD was working. Only the originally active view may be replaced.
+      if (character && result.run && selected === character) {
+        if (!character.runs.some((run) => run.runId === outputRunId)) character.runs.push(result.run);
+        renderRuns(character.runs);
+        void refreshReadyRuns();
+      }
+      if (!character) void refreshIndependentRuns();
+      void refreshCharacters().catch(() => {});
+      if (!isCurrent()) return;
       status.className = "status ok";
       status.textContent = `recompilado em ${(result.durationMs / 1000).toFixed(1)} s${result.cached ? " (cache)" : ""}`;
-      ensureViewer();
-      const loaded = await viewer!.load(`/api/file?path=${encodeURIComponent(result.stl)}`);
-      $("#viewer-empty").hidden = true;
-      $("#mesh-info").textContent = `${loaded.triangles.toLocaleString()} triângulos · recompilado`;
+      setStatus($("#generate-status"), `Geometria recompilada em ${(result.durationMs / 1000).toFixed(1)} s. Novo resultado: ${outputRunId}.`, "ok");
+      await showRun(outputRunId);
+      if (character) await refreshReadyRuns();
+      else await refreshIndependentRuns();
+      await refreshCharacters();
     } catch (e) {
+      if (!isCurrent()) return;
       status.className = "status error";
       status.textContent = (e as Error).message;
     } finally {
-      button.disabled = false;
+      button.disabled = !data.customizeAvailable || !isCurrent();
     }
   });
 
@@ -769,10 +1012,11 @@ for (const button of document.querySelectorAll<HTMLButtonElement>(".views button
 
 wireImport();
 wireGenerate();
+$("#refresh-independent").addEventListener("click", () => void refreshIndependentRuns());
+resetResult();
+updateGenerationAvailability();
 void loadRuntime();
-void refreshCharacters();
-
-// Keep an open result in sync after a recompile triggered elsewhere.
-window.addEventListener("focus", () => {
-  if (shownRunId && !activeStream) void showRun(shownRunId);
+void refreshIndependentRuns();
+void refreshCharacters().catch((error: Error) => {
+  $("#character-list").replaceChildren(el("li", { textContent: `Não foi possível listar personagens: ${error.message}` }));
 });

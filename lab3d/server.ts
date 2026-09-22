@@ -4,16 +4,16 @@
  * It does NOT replace the Procedura Studio. It reuses the upstream job manager
  * (`web/server/jobs.ts`), run scanner (`web/server/scan.ts`), parameter
  * customizer (`web/server/customize.ts`) and path guard (`web/server/safe.ts`)
- * unchanged, so every generation is a real `scripts/procedura.ts` subprocess
+ * with focused Windows fixes, so every generation is a real `scripts/procedura.ts` subprocess
  * writing real artifacts — and adds the character contract on top.
  *
  * Two deliberate differences from upstream:
  *   - it binds to 127.0.0.1 only (upstream binds 0.0.0.0 with no auth);
- *   - missing Windows binary paths discovered by the runtime probe are injected
- *     into the child environment, because upstream only searches POSIX paths.
+ *   - verified binary paths are recorded and passed to the child environment.
  */
 
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { basename, extname, join, relative, resolve } from "node:path";
 
 import { parseEnvFile } from "../web/server/env.ts";
@@ -32,6 +32,7 @@ import { buildBrief } from "./src/brief.ts";
 import { importCharacter, type IncomingImage } from "./src/import.ts";
 import { CharacterRegistry, RegistryConflict } from "./src/registry.ts";
 import { probeRuntime } from "./src/runtime.ts";
+import { collectEvidence, freezeEvidence, readJsonFile, UPSTREAM_COMMIT } from "./src/evidence.ts";
 
 const REPO = resolve(import.meta.dir, "..");
 const ROOT = resolve(process.env["LAB3D_OUTPUTS_ROOT"] ?? join(REPO, "outputs"));
@@ -45,20 +46,19 @@ const MAX_SHEET_BYTES = 2 * 1024 * 1024;
 mkdirSync(LAB_ROOT, { recursive: true });
 
 const registry = new CharacterRegistry(LAB_ROOT);
-const runtime = probeRuntime();
-
 const dotEnv = parseEnvFile(join(REPO, ".env"));
-const childEnv: Record<string, string> = { ...dotEnv };
-// Upstream searches $HOME/opt, /usr/local/bin and /opt. On Windows those never
-// match, so hand it the paths the probe actually found.
-if (!childEnv["OPENSCAD_PATH"] && !process.env["OPENSCAD_PATH"] && runtime.openscad.path) {
+const effectiveEnv = { ...dotEnv, ...process.env };
+const runtime = probeRuntime(effectiveEnv);
+const childEnv: Record<string, string> = Object.fromEntries(Object.entries(effectiveEnv).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+// The core and customizer must execute the same binary that passed the probe.
+if (runtime.openscad.path) {
   childEnv["OPENSCAD_PATH"] = runtime.openscad.path;
 }
-if (!childEnv["PROCEDURA_BLENDER_PATH"] && !process.env["PROCEDURA_BLENDER_PATH"] && runtime.blender.path) {
+if (runtime.blender.path) {
   childEnv["PROCEDURA_BLENDER_PATH"] = runtime.blender.path;
 }
 
-const OPENSCAD = process.env["OPENSCAD_PATH"] || childEnv["OPENSCAD_PATH"] || runtime.openscad.path || "openscad";
+const OPENSCAD = runtime.openscad.path ?? "openscad";
 
 const jobs = new JobManager({
   root: ROOT,
@@ -142,7 +142,8 @@ async function handleImport(req: Request): Promise<Response> {
   const entries = [...form.entries()] as unknown as [string, string | File][];
   for (const [field, value] of entries) {
     if (typeof value === "string") continue;
-    if (field === "sheet") continue;
+    if (field === "sheet" || value.size === 0) continue;
+    if (value.size > 24 * 1024 * 1024) return fail("image exceeds 24 MiB", 413);
     // Field name IS the labelled angle: front, profile-left, back, ...
     const note = form.get(`note:${field}`);
     images.push({
@@ -231,16 +232,18 @@ async function handleLabGenerate(req: Request): Promise<Response> {
   if (!jobs.enabled) {
     return fail("generation unavailable: run `bun install` in the repo root so the CLI can be spawned", 503);
   }
-  if (!runtime.openscad.path) {
+  if (!runtime.capabilities.recompileParams) {
     return fail("generation unavailable: OpenSCAD was not found; see lab3d/docs/WINDOWS_SETUP.md", 503);
   }
   if (!runtime.llm.configured) {
     return fail("generation unavailable: no LLM credential configured (OPENAI_API_KEY in .env)", 503);
   }
+  if (!runtime.blender.path) return fail("generation unavailable: Blender is required for shape evaluation", 503);
 
   let body: LabGenerateRequest;
   try {
     body = (await req.json()) as LabGenerateRequest;
+    if (!body || typeof body !== "object" || Array.isArray(body)) return fail("expected a JSON object");
   } catch {
     return fail("invalid JSON body");
   }
@@ -260,14 +263,20 @@ async function handleLabGenerate(req: Request): Promise<Response> {
   const imagePath = relative(ROOT, imageAbs).split("\\").join("/");
 
   const options: JobOptions = { imagePath };
-  const steps = Number(body.maxSteps);
-  if (Number.isFinite(steps) && steps >= 0 && steps <= 40) options.maxSteps = Math.floor(steps);
+  const steps = body.maxSteps ?? 4;
+  if (typeof steps !== "number" || !Number.isInteger(steps) || steps < 0 || steps > 20) return fail("maxSteps must be an integer from 0 to 20", 422);
+  options.maxSteps = steps;
   if (body.paint === true) options.paint = true;
   if (body.contextRenders === true) options.contextRenders = true;
+  if (body.exportStl === true) options.exportStl = true;
   for (const k of ["agentModel", "scadModel"] as const) {
     const v = body[k];
     if (typeof v === "string" && v.trim() && v.length < 200) options[k] = v.trim();
+    else if (v !== undefined) return fail(`invalid ${k}`, 422);
   }
+  // Record explicit effective models so a later .env change cannot relabel a run.
+  options.agentModel ??= runtime.llm.model;
+  options.scadModel ??= runtime.llm.model;
 
   try {
     const job = jobs.create(brief.text, options);
@@ -281,7 +290,28 @@ async function handleLabGenerate(req: Request): Promise<Response> {
       referenceFile: front.file,
       options: { ...options },
     };
-    registry.linkRun(run);
+    try {
+      registry.linkRun(run);
+      writeFileSync(join(ROOT, job.runId, "lab3d-execution.json"), JSON.stringify({
+        ...run, upstreamCommit: UPSTREAM_COMMIT,
+        runtime: { bun: runtime.bun, openscad: runtime.openscad.version, blender: runtime.blender.version, llm: runtime.llm },
+        referenceSha256: front.sha256,
+      }, null, 2), { flag: "wx" });
+    } catch (e) {
+      jobs.cancel(job.id);
+      throw e;
+    }
+    const save = () => {
+      const current = jobs.byRunId(job.runId);
+      if (current && current.status !== "running" && current.status !== "queued") {
+        try { freezeEvidence(ROOT, join(ROOT, job.runId), run, current); } catch (e) { console.error("evidence:", (e as Error).message); }
+      }
+    };
+    let off: (() => void) | null = null;
+    off = jobs.subscribe(job.id, (event) => {
+      if (event.type === "status" && !["running", "queued"].includes(event.job.status)) { save(); off?.(); }
+    });
+    save();
     return json({ job, run }, 201);
   } catch (e) {
     return toError(e);
@@ -297,6 +327,27 @@ function handleRunCharacter(req: Request): Response {
     if (run) return json({ record, run });
   }
   return json({ record: null, run: null });
+}
+
+function linkedRun(runId: string): CharacterRun | null {
+  for (const record of registry.list()) {
+    const run = registry.runs(record.key).find((r) => r.runId === runId);
+    if (run) return run;
+  }
+  return null;
+}
+
+function handleIndependentRuns(): Response {
+  const linked = new Set(registry.list().flatMap((record) => registry.runs(record.key).map((run) => run.runId)));
+  return json({ runs: listRuns(ROOT).filter((run) => !linked.has(run.id)) });
+}
+
+function handleEvidence(req: Request): Response {
+  const runId = q(req, "runId");
+  if (!runId) return fail("missing ?runId");
+  const dir = resolveRunDir(ROOT, runId);
+  if (!dir) return fail("run not found", 404);
+  return json(collectEvidence(ROOT, dir, linkedRun(runId), jobs.byRunId(runId)));
 }
 
 // ── reused Procedura studio routes ──────────────────────────────────────────
@@ -350,6 +401,13 @@ function handleJobStream(req: Request): Response {
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      const finish = () => {
+        unsubscribe?.();
+        unsubscribe = null;
+        live = null;
+        try { controller.close(); } catch { /* already closed */ }
+      };
+      req.signal.addEventListener("abort", finish, { once: true });
       const send = (ev: JobEvent) => {
         try {
           controller.enqueue(enc.encode(`data: ${JSON.stringify(ev)}\n\n`));
@@ -357,22 +415,19 @@ function handleJobStream(req: Request): Response {
           /* client gone */
         }
       };
-      send({ type: "status", job: snap.record });
       send({ type: "progress", progress: snap.progress });
       for (const line of snap.log) send({ type: "log", line });
+      // A terminal status tells EventSource clients to close. Send it last so
+      // reopening a completed run still delivers its persisted log first.
+      send({ type: "status", job: snap.record });
       for (const ev of buffered.splice(0)) send(ev);
       live = (ev) => {
         send(ev);
         if (ev.type === "status" && ev.job && ev.job.status !== "running" && ev.job.status !== "queued") {
-          setTimeout(() => {
-            try {
-              controller.close();
-            } catch {
-              /* already closed */
-            }
-          }, 250);
+          finish();
         }
       };
+      if (!["running", "queued"].includes(snap.record.status)) finish();
     },
     cancel() {
       unsubscribe?.();
@@ -398,21 +453,26 @@ function handleParams(req: Request): Response {
   let params: ScadParam[] = [];
   try {
     params = extractParams(readFileSync(scadAbs, "utf8"));
+    const saved = readJsonFile(join(r.dir, "lab3d-execution.json"));
+    const applied = extractParams((saved?.defines ?? []).join(";\n") + ";");
+    const values = new Map(applied.map((p) => [p.name, p.value]));
+    params = params.map((p) => values.has(p.name) ? { ...p, value: values.get(p.name)! } : p);
   } catch (e) {
     return fail(`could not read SCAD: ${(e as Error).message}`, 500);
   }
   return json({
     params,
     scadPath: relative(ROOT, scadAbs).split("\\").join("/"),
-    customizeAvailable: Boolean(runtime.openscad.path),
+    customizeAvailable: runtime.capabilities.recompileParams,
   });
 }
 
 async function handleCustomize(req: Request): Promise<Response> {
-  if (!runtime.openscad.path) return fail("recompilation unavailable: OpenSCAD not found", 503);
-  let body: { id?: string; which?: string; overrides?: Record<string, number | boolean | string>; preview?: boolean };
+  if (!runtime.capabilities.recompileParams) return fail("recompilation unavailable: working OpenSCAD/Manifold required", 503);
+  let body: { id?: string; key?: string; which?: string; overrides?: Record<string, number | boolean | string>; preview?: boolean };
   try {
     body = (await req.json()) as typeof body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) return fail("expected a JSON object");
   } catch {
     return fail("invalid JSON body");
   }
@@ -421,34 +481,84 @@ async function handleCustomize(req: Request): Promise<Response> {
   if (!dir) return fail("run not found", 404);
   const scadAbs = resolveScadFile(dir, body.which ?? "final");
   if (!scadAbs) return fail("no SCAD file for this run", 404);
+  const parent = linkedRun(body.id);
+  if (body.key && parent?.characterKey !== body.key) return fail("run does not belong to this character", 409);
+  const active = jobs.byRunId(body.id);
+  if (active && ["running", "queued"].includes(active.status)) return fail("wait for the source generation to finish", 409);
+  if (body.preview === true) return fail("use a full recompilation for a saved laboratory result", 422);
+  if (!body.overrides || typeof body.overrides !== "object" || Array.isArray(body.overrides)) return fail("overrides must be an object", 422);
 
-  const params = extractParams(readFileSync(scadAbs, "utf8"));
+  const source = readFileSync(scadAbs, "utf8");
+  const codeOnly = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|"(?:\\.|[^"\\])*"/g, "");
+  if (/\b(?:include|use)\s*<|\b(?:import|surface)\s*\(/.test(codeOnly)) {
+    return fail("saved recompilation currently requires self-contained SCAD; external include/use/import/surface dependencies are not copied", 422);
+  }
+  const params = extractParams(source);
   const byName = new Map(params.map((p) => [p.name, p]));
-  const defines: string[] = [];
+  const inherited = readJsonFile(join(dir, "lab3d-execution.json"));
+  const effectiveDefines = new Map<string, string>();
+  if (Array.isArray(inherited?.defines)) {
+    for (const p of extractParams(inherited.defines.join(";\n") + ";")) {
+      const param = byName.get(p.name);
+      const define = param && overrideToDefine(param, p.value);
+      if (define) effectiveDefines.set(p.name, define);
+    }
+  }
   for (const [name, value] of Object.entries(body.overrides ?? {})) {
     const param = byName.get(name);
     if (!param) return fail(`unknown parameter "${name}"`, 422);
+    if ((param.type === "number" || param.type === "enum-number") && (typeof value !== "number" || !Number.isFinite(value))) return fail(`invalid number for "${name}"`, 422);
+    if (param.type === "boolean" && typeof value !== "boolean") return fail(`invalid boolean for "${name}"`, 422);
+    if (["string", "enum-string", "vector"].includes(param.type) && typeof value !== "string") return fail(`invalid text for "${name}"`, 422);
+    if (param.options && !param.options.includes(value as never)) return fail(`value is not a supported option for "${name}"`, 422);
+    if (typeof value === "number" && ((param.min !== undefined && value < param.min) || (param.max !== undefined && value > param.max))) return fail(`value outside declared range for "${name}"`, 422);
     const define = overrideToDefine(param, value);
     if (!define) return fail(`invalid value for "${name}"`, 422);
-    defines.push(define);
+    effectiveDefines.set(name, define);
   }
+  const defines = [...effectiveDefines.values()];
 
+  const runId = `recompile-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+  const runDir = join(ROOT, runId);
+  mkdirSync(runDir);
+  // Keep the original execution immutable. The new SCAD carries the values
+  // applied by OpenSCAD; relative includes are still resolved from the parent.
+  const effectiveScad = source + "\n// Laboratorio3D applied parameters\n" + defines.map((d) => d + ";").join("\n") + "\n";
+  writeFileSync(join(runDir, "final.scad"), effectiveScad, { flag: "wx" });
+  writeFileSync(join(runDir, "prompt_input.txt"), `Recompilação de ${body.id}; sem chamada de modelo.\n`, { flag: "wx" });
+  const run: CharacterRun | null = parent ? {
+    characterKey: parent.characterKey, runId, jobId: runId, purpose: "recompile", createdAt: new Date().toISOString(),
+    briefDigest: parent.briefDigest, referenceFile: parent.referenceFile,
+    options: { sourceRunId: body.id, which: body.which ?? "final", overrides: body.overrides },
+  } : null;
+  writeFileSync(join(runDir, "lab3d-execution.json"), JSON.stringify({
+    ...(run ?? { runId, purpose: "recompile", characterKey: null }), upstreamCommit: UPSTREAM_COMMIT,
+    sourceRunId: body.id, sourceScadSha256: sha256Hex(source), defines,
+    openscad: { version: runtime.openscad.version, path: OPENSCAD },
+  }, null, 2), { flag: "wx" });
+  if (run) registry.linkRun(run);
   const result = await compileCustom({
     openscad: OPENSCAD,
     root: ROOT,
     runDir: dir,
     scadAbs,
     defines,
-    preview: body.preview === true,
+    preview: false,
   });
+  writeFileSync(join(runDir, "lab3d-completion.json"), JSON.stringify({ ...result, completedAt: new Date().toISOString() }, null, 2), { flag: "wx" });
   if (result.ok) {
+    copyFileSync(safeJoin(ROOT, result.stl)!, join(runDir, "final.stl"));
+    freezeEvidence(ROOT, runDir, run, null);
     return json({
-      stl: result.stl,
+      stl: `${runId}/final.stl`,
+      run,
+      runId,
       durationMs: result.durationMs,
       cached: result.cached,
       preview: result.preview ?? null,
     });
   }
+  freezeEvidence(ROOT, runDir, run, null);
   return fail(result.error, result.busy ? 429 : 422);
 }
 
@@ -470,27 +580,41 @@ function handleFile(req: Request): Response {
 
 // ── serve ───────────────────────────────────────────────────────────────────
 
+function local(handler: (req: Request) => Response | Promise<Response>) {
+  return async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    if (!["127.0.0.1", "localhost"].includes(url.hostname)) return fail("local host required", 403);
+    const origin = req.headers.get("origin");
+    if (origin && origin !== url.origin) return fail("cross-origin access is disabled for this local laboratory", 403);
+    if (req.headers.get("sec-fetch-site") === "cross-site") return fail("cross-site access is disabled", 403);
+    try { return await handler(req); } catch (e) { return toError(e); }
+  };
+}
+
 const server = Bun.serve({
   port: PORT,
   hostname: HOST,
   development: DEV ? { hmr: true } : false,
+  maxRequestBodySize: 96 * 1024 * 1024,
   routes: {
-    "/api/lab/runtime": { GET: handleRuntime },
-    "/api/lab/import": { POST: handleImport },
-    "/api/lab/characters": { GET: handleCharacters },
-    "/api/lab/character": { GET: handleCharacter },
-    "/api/lab/asset": { GET: handleAsset },
-    "/api/lab/generate": { POST: handleLabGenerate },
-    "/api/lab/run-character": { GET: handleRunCharacter },
-    "/api/runs": { GET: handleRuns },
-    "/api/run": { GET: handleRun },
-    "/api/jobs": { GET: handleJobs },
-    "/api/job": { GET: handleJob },
-    "/api/jobs/cancel": { POST: handleCancel },
-    "/api/jobs/stream": { GET: handleJobStream },
-    "/api/params": { GET: handleParams },
-    "/api/customize": { POST: handleCustomize },
-    "/api/file": { GET: handleFile },
+    "/api/lab/runtime": { GET: local(handleRuntime) },
+    "/api/lab/import": { POST: local(handleImport) },
+    "/api/lab/characters": { GET: local(handleCharacters) },
+    "/api/lab/character": { GET: local(handleCharacter) },
+    "/api/lab/asset": { GET: local(handleAsset) },
+    "/api/lab/generate": { POST: local(handleLabGenerate) },
+    "/api/lab/run-character": { GET: local(handleRunCharacter) },
+    "/api/lab/evidence": { GET: local(handleEvidence) },
+    "/api/lab/independent-runs": { GET: local(handleIndependentRuns) },
+    "/api/runs": { GET: local(handleRuns) },
+    "/api/run": { GET: local(handleRun) },
+    "/api/jobs": { GET: local(handleJobs) },
+    "/api/job": { GET: local(handleJob) },
+    "/api/jobs/cancel": { POST: local(handleCancel) },
+    "/api/jobs/stream": { GET: local(handleJobStream) },
+    "/api/params": { GET: local(handleParams) },
+    "/api/customize": { POST: local(handleCustomize) },
+    "/api/file": { GET: local(handleFile) },
     "/*": index,
   },
 });

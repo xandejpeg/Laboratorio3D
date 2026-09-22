@@ -1,173 +1,68 @@
-# Marco 1 — o que funciona, o que está bloqueado
+# Marco 1 — laboratório funcional e limites da validação
 
-Data: 2026-09-22 · Máquina: Windows, Bun 1.3.8
+Data: 22/09/2026. Plataforma: Windows x64, Bun 1.3.8.
 
-Este relatório distingue o que foi **executado e observado** do que ainda não
-pôde ser executado. Nenhuma etapa abaixo é simulada.
+O marco entrega importação real, registro persistente, execução geométrica local, acompanhamento do pipeline Procedura, visualização e recompilação. **A geração completa por modelo e a fidelidade humana continuam sem validação**, pois não há credencial configurada nem provedor, modelo e orçamento autorizados para o ensaio.
 
----
+## Base preservada
 
-## 1. Base Procedura rastreável
+A inspeção encontrou o Laboratorio3D em `fd3faf6`, já com quatro commits próprios sobre o Procedura. Esse trabalho foi preservado. `upstream/main` continua em `fac191ed49f55fcc2e0f23897e986042249f59fe`, o mesmo commit do estudo técnico local, que foi lido junto às três auditorias. A licença MIT permanece intacta; os remotos são `origin=xandejpeg/Laboratorio3D` e `upstream=SpatiaOS/Procedura`.
 
-- `upstream` → `https://github.com/SpatiaOS/Procedura.git`
-- `origin` → `https://github.com/xandejpeg/Laboratorio3D.git`
-- Commit upstream de referência: **`fac191ed49f55fcc2e0f23897e986042249f59fe`**
-  (é o próprio topo de `upstream/main`; o histórico público do Procedura é um
-  único commit inicial).
-- A licença MIT do upstream permanece em `LICENSE`, sem alteração.
-- **Nenhum arquivo upstream foi modificado.** Todo o código do laboratório vive
-  em `lab3d/`. Isso mantém `git merge upstream/main` limpo e deixa claro, por
-  caminho de arquivo, o que é deles e o que é nosso.
-- O laboratório **importa e reutiliza** `web/server/jobs.ts`, `scan.ts`,
-  `customize.ts`, `safe.ts` e `env.ts` — não os copia nem os substitui. Toda
-  geração é um subprocesso real `bun run scripts/procedura.ts`.
+O laboratório reutiliza a fila, scanner de execuções, parâmetros e compilação do Studio. O visualizador carrega OBJ/MTL ou STL real. Há adaptações pontuais no núcleo para Windows, documentadas em [ATTRIBUTION.md](../../ATTRIBUTION.md); não se presume que futuros merges serão livres de conflitos.
 
-## 2. O que foi verificado em execução
+## Validação executada
 
-Servidor no ar em `http://127.0.0.1:8770` (somente local), com as rotas
-exercitadas por HTTP real:
+- Instalação das dependências pelos lockfiles e verificação de tipos da raiz e do laboratório.
+- Testes automatizados de contrato, integridade, fila, HTTP, isolamento de personagens e recompilação real pelo OpenSCAD. O registro de validação do commit informa a contagem final.
+- Bun 1.3.8, OpenSCAD 2026.09.18/Manifold e Blender 5.2.1 LTS funcionando no Windows nativo. Isaac Sim não foi usado.
+- Suporte mecânico sintético compilado em STL e OBJ com 812 triângulos, renderizado em frente, perfil direito, costas e isométrica pelo Blender/Cycles em CPU.
+- Primeiro ensaio: 341 ms de compilação e 21.164 ms para quatro renders; total 22.747 ms. Repetição com publicação dos arquivos no laboratório: 253 ms de compilação, 71.612 ms de render e 73.332 ms no total. São medições locais, não promessa de latência.
+- Recompilação alterou a caixa de 40 × 24 × 30 para 52 × 24 × 34; repetição idêntica reutilizou o cache, alteração da fonte invalidou o cache e fonte inválida foi rejeitada.
+- Renderizadores AO com cores, cores por peça e PBR também produziram imagens válidas sem modelo.
+- Um worker e seu filho foram encerrados no Windows; a fila preserva os logs após reabrir o servidor.
+- PNG e ficha reais foram exportados pelo gerador 2D, importados via multipart HTTP e conferidos na interface. Nenhum código do 2D foi alterado.
 
-| Verificação | Resultado observado |
-|---|---|
-| `GET /api/lab/runtime` | OpenSCAD 2026.09.18 com backend Manifold, Blender 5.2.1 LTS, LLM não configurado, `generate: false`, `recompileParams: true` |
-| `POST /api/lab/import` (ficha + PNG 900×1280) | `201`, registro congelado, `reused: false` |
-| Reimportar a mesma combinação | `200`, `reused: true`, mesma chave, mesmo `importedAt` |
-| Importar com uma referência de costas anexada | `201`, **outra chave**, e as regiões sem referência caem de 5 para 4 |
-| PNG 512×512 com ficha que declara 900×1280 | `422 front image does not match the sheet` |
-| `POST /api/lab/generate` | `503 generation unavailable: no LLM credential is configured` |
-| `GET /api/lab/asset?...&file=../record.json` | `404` — o caminho não escapa do registro |
-| `GET /` e bundle da interface | `200`; CSS 7 kB e JS 1,47 MB (inclui three.js) servidos |
+O ensaio mecânico é um controle de runtime a partir de **SCAD sintético escrito manualmente**. Não valida planejamento ou autoria por IA. Seus arquivos aparecem como resultado independente, sem vínculo com personagem. Detalhes em [MECANICO_OFFLINE.md](MECANICO_OFFLINE.md).
 
-### Compilação real com OpenSCAD
+## Referência humana preparada
 
-Com o OpenSCAD instalado, a cadeia de compilação e recompilação foi exercitada
-de ponta a ponta sobre um SCAD paramétrico (flange com furos):
+A combinação fixa usa feminino, corpo Original, rosto Serena, cabelo Trançado castanho claro, olhos naturais castanhos, pele natural, sem marcas e macacão cinza. PNG frontal de 900 × 1280 e ficha mantêm os IDs reais; a altura física é `null`, como no export.
 
-| Verificação | Resultado observado |
-|---|---|
-| Compilação com `--backend Manifold` | STL 249 kB e OBJ 27 kB, **1.084 facetas** |
-| `GET /api/params` | Os 6 parâmetros do SCAD, `customizeAvailable: true` |
-| `POST /api/customize` com parâmetro inexistente | `422` — só recompila o que o SCAD declara |
-| `POST /api/customize` pela interface (`bolt_count` 4 → 8) | `200` em **0,3 s**, malha passa de 1.084 para **1.356 triângulos** |
+A ficha exportada não contém versão de catálogo; o adaptador conserva `generatorVersion: "unknown"`. A versão `2dc-r3` foi observada separadamente no próprio gerador. O futuro envio deve usar o contrato nativo com a versão explícita. Não acrescentamos esse dado ao JSON original.
 
-### Interface em navegador real
+A comparação visual identificou calçados mais robustos que os descritos no antigo prompt do macacão. O briefing agora manda conservar os calçados e detalhes efetivamente visíveis, priorizando a imagem sobre descrições de direção de arte.
 
-Verificada com o navegador controlado por automação, **zero erros de console**:
+**Nenhuma malha humana foi gerada.** Cabeça/corpo, rosto, implantação do cabelo, ombros, braços, cintura, quadris, pernas, mãos, pés, roupa e consistência frente/perfil/costas permanecem sem nota de qualidade 3D. Regiões ocultas continuam marcadas como inferidas. O protocolo está em [QUALITY_PROTOCOL.md](QUALITY_PROTOCOL.md).
 
-- O aviso de capacidades mostra `✓ importar · ✕ gerar · ✓ recompilar · ✓ crítica
-  visual` com a causa do bloqueio escrita por extenso.
-- Selecionar um personagem carrega a referência 2D em 900×1280, a ficha
-  traduzida, os avisos de regiões sem referência e o briefing.
-- "Visualizar pronto" abre uma execução existente **sem executar nada**, e o
-  visualizador desenha a malha que o OpenSCAD produziu — os 8 furos aparecem na
-  tela depois da recompilação, confirmando que a geometria exibida é a do
-  sistema, não um modelo montado à mão.
+## Correções que sustentam o marco
 
-Suíte de testes: **37 testes, 0 falhas** (`bun test` em `lab3d/`).
-Verificação de tipos: **limpa** (`tsc --noEmit`).
-Todas as fixtures são sintéticas e geradas em código — nenhuma imagem privada,
-nenhum export real e nenhuma credencial entram no repositório.
+- O visualizador verifica o vínculo execução/personagem e descarta respostas antigas após trocar a seleção. Um ensaio independente remove explicitamente a referência 2D anterior.
+- A entrada é congelada atomicamente. Hashes de receita, contrato e imagens diferenciam combinações; corrupção é recusada. Um run não pode ser reassociado a outro personagem.
+- Referências adicionais ficam rotuladas como `stored`. Não reduzem a incerteza do gerador enquanto não forem conectadas às etapas do pipeline.
+- A recompilação cria um novo run, registra fonte, valores efetivos, hash dos arquivos e ancestral; não sobrescreve a geração original. Edições sucessivas preservam os valores herdados.
+- O resultado expõe metadados, duração disponível, erros, omissões/peças soltas **no rascunho** e resumo final separado. `quality.approval` fica em `not-reviewed`.
+- Os logs são persistidos e enviados antes do status terminal ao reabrir uma execução por SSE.
+- O serviço escuta apenas em loopback e recusa requisições de sites externos. Credenciais e uploads ficam fora do Git.
 
-## 3. O que funciona hoje
+## Pendências concretas
 
-- **Importação** de `2dc-ficha-*.json`, `2dc-receita.json` ou do pacote nativo
-  `lab3d.character-import` v1, junto do PNG frontal e de referências rotuladas
-  opcionais.
-- **Registro imutável**: chave SHA-256 sobre contrato + gerador + receita +
-  digests de todas as imagens + altura. Combinação repetida reaproveita o
-  registro; conteúdo diferente na mesma chave é recusado com `409`.
-- **Tradução dos IDs**: cada `female-outfit-0` vira "Macacão cinza" com a
-  descrição visual derivada do prompt de arte original. IDs fora do vocabulário
-  são **listados como desconhecidos**, nunca adivinhados.
-- **Briefing honesto**: o texto enviado ao pipeline lista as regiões sem
-  referência visual, calculadas a partir dos ângulos realmente presentes, e
-  instrui explicitamente a não acrescentar musculatura nem afinar a figura.
-- **Interface** com importação, revisão da ficha, ações separadas (gerar /
-  recompilar / visualizar), progresso real por SSE com o log do processo,
-  comparação lado a lado 2D × 3D, órbita e zoom, lista de arquivos exportados,
-  histórico de execuções e editor dos parâmetros que o Procedura de fato expõe.
-- **Compilação e recompilação** de geometria com OpenSCAD/Manifold, medida em
-  frações de segundo, com a malha recarregada no visualizador.
-- **Sondagem de ambiente** para Windows, que alimenta `OPENSCAD_PATH` e
-  `PROCEDURA_BLENDER_PATH` no processo filho — o upstream só procura em
-  `$HOME/opt`, `/usr/local/bin` e `/opt`.
+1. Confirmar provedor, modelo multimodal, credencial local e teto de gasto antes das chamadas cobradas. Um modelo configurado não significa acesso comercial testado.
+2. Rodar planejamento → módulos → compilação → Blender → crítica → correções → exportação para um objeto mecânico e para a personagem fixa.
+3. O caminho direto de LLM upstream não persiste consumo completo. Neste marco ele aparece como indisponível, nunca como zero. O ensaio local sem modelo registra zero. O limite de ciclos não é um limite monetário; controle de gasto deve ser definido antes da execução paga.
+4. Ainda não há aprovação humana persistente pela interface, rig deformável, UVs/bake completos ou exportação de personagem pronta para jogo.
+5. A recompilação persistente exige SCAD autocontido. `include/use/import/surface` externos são recusados com explicação até existir snapshot das dependências.
+6. Referências laterais e traseiras externas ainda não chegam ao planejamento/refino/pintura. `extraRefs` upstream gera imagens por texto e não substitui essa integração.
+7. O seletor de arquivos do navegador automatizado não completou o diálogo nesta sessão. A importação multipart foi validada por HTTP real; consulta, visualização e controles foram verificados no navegador.
 
-## 4. O que está bloqueado, e por quê
+## Limites confirmados no código atual
 
-| Bloqueio | Consequência | Como destravar |
-|---|---|---|
-| **Sem credencial de LLM** | Planejamento, geração das peças e refino não podem começar; sem eles não há SCAD para compilar | [WINDOWS_SETUP.md § 4](WINDOWS_SETUP.md) |
+| Ponto | Evidência e consequência |
+| --- | --- |
+| Humanoides CSG | `prompts/scad_system.md` e `scad_part_system.md` orientam módulos e primitivas. Isso permite experimentar humanos, mas não garante identidade ou anatomia fiel. |
+| Articulações | `src/motion/types.ts` e `usda.ts` descrevem links rígidos e juntas; não equivalem a skinning humano. |
+| OBJ/MTL | `src/mesh/obj.ts` escreve vértices/faces; materiais por peça não preservam automaticamente UVs, texturas e efeitos de `_render_pbr_blender.py`. |
+| Escala | `src/mesh/normalize.ts` pode normalizar OBJ. Altura física ausente não pode ser deduzida do tamanho do arquivo. |
+| Referências extras | `src/pipeline/draft-incremental.ts` gera extras por texto; `refine-direct.ts` usa a imagem principal como alvo. |
+| Status | `web/server/jobs.ts` pode marcar sucesso pelo código de saída ou por existir malha. Isso não aprova qualidade; artefatos parciais e veredito são expostos separadamente. |
 
-OpenSCAD deixou de ser bloqueio: foi instalado (snapshot 2026.09.18, ZIP
-portátil com SHA-256 conferido, sem elevação) e a recompilação de parâmetros
-já roda pela interface.
-
-Consequência direta: **os dois ensaios de qualidade ainda não puderam ser
-executados** — nem a personagem feminina de macação cinza, nem o objeto
-mecânico simples. O laboratório responde `503` com a causa em vez de exibir uma
-geração fingida.
-
-Para executá-los é preciso **confirmar provedor, modelo e orçamento
-autorizado**, já que cada execução é cobrada por chamada ao modelo. A chave
-deve ser escrita direto no `.env` da raiz, que está no `.gitignore`.
-
-## 5. Limites do estudo, confirmados no código atual
-
-Cada item abaixo foi verificado no código deste repositório, não presumido.
-
-**1. Fidelidade humanoide via CSG/OpenSCAD é limitada.**
-`prompts/scad_system.md` restringe a saída a primitivas CSG (`cube`, `sphere`,
-`cylinder`, `polyhedron`, `hull`, `minkowski`, `offset`) e proíbe `import()`.
-Rosto, cabelo e tecido são aproximados por união de sólidos; o próprio prompt
-mede sucesso por contagem de módulos ("10–25 módulos de topo para um
-humanoide"), não por semelhança de superfície. Identidade facial e caimento de
-roupa não são representáveis nesse vocabulário com a fidelidade de uma escultura.
-
-**2. Articulações rígidas não são um rig deformável.**
-`src/motion/types.ts` define `MotionJointType` como `fixed | revolute |
-prismatic | ...` e `MotionRigidBodyKind` como `dynamic | kinematic | static`.
-Um "link" é um conjunto de módulos SCAD de topo (`MotionLinkSpec.modules`). Não
-há pesos de skinning, nem malha deformável, nem blend shapes em lugar nenhum do
-pipeline. Serve para simulação de corpos rígidos, não para animação de
-personagem.
-
-**3. O OBJ/MTL exportado não tem UVs.**
-`src/mesh/obj.ts` documenta no cabeçalho: *"Minimal OBJ writer (vertex/face
-only)"* e *"Why no normals or UVs"*. A pintura é por material aplicado a grupos
-de faces, não textura mapeada. Não há coordenada de textura para levar a um
-pipeline de texturização.
-
-**4. `extraRefs` não é entrada de múltiplos ângulos.**
-Em `src/pipeline/draft-incremental.ts`, `extraRefs` **gera** imagens novas com
-um modelo de imagem a partir do texto (`EXTRA_REF_VIEWS` reescreve o ângulo do
-prompt: front, side, rear, top). Ele não aceita fotografias ou renders externos.
-Por isso o laboratório marca toda referência adicional como
-`influence: "stored"`: ela é guardada, rotulada e entra na identidade, mas não
-chega ao gerador — que recebe um único `--image`.
-
-**5. `succeeded` com malha não é aprovação visual.**
-`web/server/jobs.ts` marca o trabalho como `succeeded` quando o código de saída
-é 0 **ou** quando qualquer malha existe (`finalReady || draftReady`), mesmo
-quando o refino terminou em `give_up` ou estourou `max-steps`. A interface do
-laboratório mostra o veredito real do refino ao lado do status e avisa, no
-próprio painel de resultado, que a existência de malha não significa aprovação.
-
-## 6. Dados privados fora do Git
-
-- `outputs/` (que contém `outputs/lab3d/`, todo o registro, os uploads e os
-  resultados) já está no `.gitignore` herdado do upstream.
-- `.env` e `.env.*` estão ignorados; `.env.example` permanece versionado.
-- Nenhum código do gerador 2D foi copiado para cá — apenas o contrato de dados
-  documentado em [CONTRACT.md](CONTRACT.md).
-- As fixtures de teste são geradas em código (PNG sintético construído byte a
-  byte, receita sintética com a gramática real de IDs).
-
-## 7. Próximos passos, em ordem
-
-1. Configurar provedor/modelo e confirmar orçamento.
-2. Executar o ensaio do objeto mecânico simples (baixo custo, valida a cadeia
-   inteira: plano → peças → compilação → render → refino → exportação).
-3. Executar o ensaio da personagem de macação cinza e comparar com a referência
-   2D na tela de comparação.
-4. Registrar o resultado observado — inclusive o que o CSG não conseguir
-   reproduzir — antes de considerar qualquer ajuste no pipeline.
+Dados particulares e evidências com a personagem ficam em `outputs/`, ignorados pelo Git. Fixtures versionadas são sintéticas.
