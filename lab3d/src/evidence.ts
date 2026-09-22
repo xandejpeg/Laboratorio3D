@@ -24,12 +24,20 @@ export function collectEvidence(root: string, dir: string, run: CharacterRun | n
   const omittedParts = parts?.plan.filter((p) => !generated.has(p.name)).map((p) => p.name) ?? [];
   const errors = [job?.error, completion?.error, ...(parts?.parts.map((p) => p.error) ?? [])]
     .filter((e): e is string => typeof e === "string" && Boolean(e));
-  const artifacts = detail.files.filter((f) => f.kind === "mesh" || f.kind === "scad" || f.kind === "image" || /summary|materials|lab3d-/.test(f.path))
+  const primary = detail.files.filter((f) => f.kind === "mesh" || f.kind === "scad" || f.kind === "image" || /summary|materials|lab3d-/.test(f.path))
     .filter((f) => !f.path.endsWith("lab3d-evidence.json"))
-    .flatMap((f) => {
-      const abs = safeJoin(root, f.path);
+    .map((f) => f.path);
+  const views = [...detail.previewViews, ...detail.previewPainted,
+    ...detail.cycles.flatMap((cycle) => cycle.views),
+    ...detail.renderSteps.flatMap((step) => [...step.ao, ...step.partsColor])];
+  const artifacts = [...new Set([...primary, ...views.map((view) => view.path)])]
+    .flatMap((path) => {
+      const abs = safeJoin(root, path);
       if (!abs) return [];
-      try { return [{ path: f.path, bytes: f.bytes, sha256: createHash("sha256").update(readFileSync(abs)).digest("hex") }]; }
+      try {
+        const bytes = readFileSync(abs);
+        return [{ path, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }];
+      }
       catch { return []; } // An in-progress artifact may be replaced while scanning.
     });
   return {
@@ -38,6 +46,7 @@ export function collectEvidence(root: string, dir: string, run: CharacterRun | n
     purpose,
     job,
     configuration,
+    completion,
     elapsedMs: job?.startedAt != null ? (job.endedAt ?? Date.now()) - job.startedAt : completion?.durationMs ?? null,
     quality: {
       approval: "not-reviewed" as const,

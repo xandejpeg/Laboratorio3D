@@ -339,7 +339,13 @@ function linkedRun(runId: string): CharacterRun | null {
 
 function handleIndependentRuns(): Response {
   const linked = new Set(registry.list().flatMap((record) => registry.runs(record.key).map((run) => run.runId)));
-  return json({ runs: listRuns(ROOT).filter((run) => !linked.has(run.id)) });
+  return json({ runs: listRuns(ROOT).filter((run) => !linked.has(run.id)).map((run) => {
+    const dir = resolveRunDir(ROOT, run.id);
+    const configuration = dir ? readJsonFile(join(dir, "lab3d-execution.json")) : null;
+    const completion = dir ? readJsonFile(join(dir, "lab3d-completion.json")) : null;
+    return { ...run, purpose: configuration?.purpose ?? "unlinked",
+      completion: typeof completion?.ok === "boolean" ? { ok: completion.ok } : null };
+  }) });
 }
 
 function handleEvidence(req: Request): Response {
@@ -522,10 +528,11 @@ async function handleCustomize(req: Request): Promise<Response> {
   const runDir = join(ROOT, runId);
   mkdirSync(runDir);
   // Keep the original execution immutable. The new SCAD carries the values
-  // applied by OpenSCAD; relative includes are still resolved from the parent.
+  // applied by OpenSCAD; external dependencies were rejected above.
   const effectiveScad = source + "\n// Laboratorio3D applied parameters\n" + defines.map((d) => d + ";").join("\n") + "\n";
   writeFileSync(join(runDir, "final.scad"), effectiveScad, { flag: "wx" });
   writeFileSync(join(runDir, "prompt_input.txt"), `Recompilação de ${body.id}; sem chamada de modelo.\n`, { flag: "wx" });
+  copyFileSync(join(runDir, "prompt_input.txt"), join(runDir, "prompt.txt"));
   const run: CharacterRun | null = parent ? {
     characterKey: parent.characterKey, runId, jobId: runId, purpose: "recompile", createdAt: new Date().toISOString(),
     briefDigest: parent.briefDigest, referenceFile: parent.referenceFile,

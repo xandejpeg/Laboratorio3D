@@ -72,6 +72,11 @@ writeFileSync(join(out, "final.scad"), code);
 copyFileSync(result.stlPath, join(out, "final.stl"));
 copyFileSync(result.objPath, join(out, "final.obj"));
 writeFileSync(join(out, "prompt_input.txt"), "Ensaio mecânico local / SCAD sintético escrito manualmente, sem geração por IA\n");
+copyFileSync(join(out, "prompt_input.txt"), join(out, "prompt.txt"));
+mkdirSync(join(out, "preview_final"), { recursive: true });
+for (const view of rendered.views) {
+  copyFileSync(view.path, join(out, "preview_final", `ao-${view.view}.png`));
+}
 writeFileSync(join(out, "lab3d-execution.json"), JSON.stringify({
   purpose: "offline-compile", characterKey: null,
   upstreamCommit: "fac191ed49f55fcc2e0f23897e986042249f59fe", modelCalls: 0,

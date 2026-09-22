@@ -30,6 +30,12 @@ Os commits `1634b09` e `936931d`, recebidos de `origin/main` durante esta implem
 
 O registro paralelo também observou ausência de amostras por mais de quatro minutos no render OPTIX. A opção `PROCEDURA_RENDER_GPU=0` foi preservada e a instância local deste marco usa CPU. A causa de driver/dispositivo não foi isolada; não se generaliza esse resultado a outras GPUs. Foram preservadas também as correções de caminhos dos prompts Windows com `fileURLToPath`.
 
+### Conferência final da interface
+
+A instância desta continuidade usa `127.0.0.1:8771`, preservando a instância já existente na porta 8770. No navegador, o controle mecânico abriu uma malha de 812 triângulos com vistas de câmera e quatro renders reais do Blender. Alterar `width` de 40 para 52 pela interface criou outra execução, com os valores efetivos disponíveis para nova edição. Ao retornar ao controle original, o parâmetro continuou em 40.
+
+Ao selecionar a personagem importada, a malha mecânica foi removida, a referência e a ficha correspondentes reapareceram, e seu histórico continuou com zero execuções. Compilações locais são identificadas pela conclusão registrada e exibem “Sem avaliação por modelo”. A galeria distingue os renders das imagens de referência. Após as últimas alterações, os testes HTTP foram repetidos sem falhas e ambas as verificações de tipos passaram.
+
 ## Referência humana preparada
 
 A combinação fixa usa feminino, corpo Original, rosto Serena, cabelo Trançado castanho claro, olhos naturais castanhos, pele natural, sem marcas e macacão cinza. PNG frontal de 900 × 1280 e ficha mantêm os IDs reais; a altura física é `null`, como no export.

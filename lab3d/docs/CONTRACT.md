@@ -34,6 +34,10 @@ POST http://127.0.0.1:8770/api/lab/import
 `front`, `profile-left`, `profile-right`, `back`, `three-quarter`, `detail`.
 Qualquer outro nome é recusado com a lista dos válidos.
 
+O corpo completo da requisição, incluindo JSON, imagens e campos multipart,
+tem limite de **96 MiB**. Os limites individuais equivalem a 2 MiB para o JSON
+e 24 MiB para cada imagem.
+
 ### O que cada referência realmente faz
 
 - `front` é a única com `influence: "pipeline"`. Ela é copiada para o diretório
@@ -118,7 +122,7 @@ chaves obrigatórias da receita são agrupados em `details`; as demais
 validações interrompem na primeira estrutura inválida:
 
 ```json
-{ "error": "import rejected", "details": ["recipe.hair must be a non-empty string (send canonicalRecipe())"] }
+{ "error": "invalid recipe", "details": ["recipe.hair must be a non-empty string (send canonicalRecipe())"] }
 ```
 
 | Regra | Comportamento |
@@ -207,9 +211,12 @@ personagem nem ter opções ou briefing alterados. Reenviar o vínculo idêntico
 }
 ```
 
-`brief.text` é exatamente o que vai para `--prompt-file`. Cada ID do 2D aparece
-acompanhado de uma descrição visual; IDs sem entrada no vocabulário aparecem em
-`unknownIds` em vez de serem traduzidos por adivinhação.
+`brief.text` é exatamente o que vai para `--prompt-file`. Os atributos ativos
+conhecidos recebem a descrição visual disponível no vocabulário. Variações
+marcadas como `referenceOnly` dependem da imagem e podem ter `visual: null`;
+IDs desconhecidos aparecem em `unknownIds`, sem tradução por adivinhação.
+Slots de roupa inativos para o traje escolhido são omitidos do briefing;
+a receita completa continua preservada no registro.
 
 ## 6. Demais rotas
 
@@ -221,5 +228,8 @@ acompanhado de uma descrição visual; IDs sem entrada no vocabulário aparecem 
 | `/api/lab/asset?key=&file=` | GET | Uma referência do registro |
 | `/api/lab/generate` | POST | Enfileira uma execução real do pipeline |
 | `/api/lab/run-character?runId=` | GET | Qual personagem originou uma execução |
+| `/api/lab/evidence?runId=` | GET | Evidências da execução, arquivos com SHA-256, limitações de qualidade e consumo disponível |
+| `/api/params?id=` | GET | Parâmetros SCAD expostos e seus valores efetivos |
+| `/api/customize` | POST | Recompila parâmetros localmente e salva uma execução separada, preservando a origem |
 
 O serviço escuta somente em `127.0.0.1`.

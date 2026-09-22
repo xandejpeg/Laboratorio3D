@@ -8,6 +8,7 @@
  */
 
 import { createViewer, type ViewerHandle } from "./viewer.ts";
+import type { RunDetail as StudioRunDetail, ViewImage } from "../../web/shared/types.ts";
 
 // ── shapes returned by /api/lab/* and the reused Studio routes ──────────────
 
@@ -87,20 +88,27 @@ interface JobProgress {
   painted: boolean; phase: string;
 }
 
-interface MeshArtifact { scadPath: string | null; stlPath: string | null; objPath: string | null; mtlPath: string | null }
-interface ArtifactFile { path: string; bytes: number; kind: string }
-
 interface RunSummary {
   id: string; title: string; status: string; mtime: number;
   hasFinalMesh: boolean; hasDraftMesh: boolean;
+  purpose?: string;
+  completion?: { ok: boolean } | null;
 }
 
-interface RunDetail {
-  id: string; status: string; verdict: string | null; finalSummary: string | null;
-  draft: MeshArtifact | null; final: MeshArtifact | null; painted: MeshArtifact | null;
-  liveBuild: { path: string; mtime: number } | null;
-  files: ArtifactFile[];
+interface RunEvidence {
+  purpose: string;
+  completion?: { ok: boolean } | null;
+  quality: { approval: string; verdict: string | null; stage: "draft"; finalSummary: string | null; omittedParts: string[]; floaterParts: string[]; errors: string[] };
+  elapsedMs: number | null;
+  usage: { inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
+  configuration: unknown;
+  artifacts: { path: string; sha256: string; bytes: number }[];
 }
+
+type RunDetail = Pick<StudioRunDetail,
+  "id" | "status" | "verdict" | "finalSummary" | "draft" | "final" | "painted" | "liveBuild" |
+  "files" | "imagePath" | "previewViews" | "previewPainted" | "cycles" | "renderSteps" | "incremental"
+>;
 
 interface ScadParam {
   name: string; type: string; value: number | boolean | string;
@@ -190,8 +198,16 @@ function setIndependentMode(independent: boolean): void {
 const statusLabel = (status: string): string => ({
   queued: "na fila", running: "em execução", canceled: "cancelada", failed: "falhou",
   succeeded: "processo concluído", interrupted: "interrompida", complete: "concluída",
-  partial: "parcial", empty: "sem artefatos",
+  partial: "parcial", incomplete: "incompleta", empty: "sem artefatos",
 }[status] ?? status);
+
+const isLocalCompilation = (purpose?: string): boolean => purpose === "offline-compile" || purpose === "recompile";
+
+function executionState(status: string, purpose?: string, completion?: { ok: boolean } | null): string {
+  if (!isLocalCompilation(purpose)) return statusLabel(status);
+  const operation = purpose === "recompile" ? "Recompilação local" : "Compilação local";
+  return `${operation} · ${completion?.ok === true ? "concluída" : completion?.ok === false ? "falhou" : "sem conclusão registrada"}`;
+}
 
 const fileUrl = (path: string): string => `/api/file?path=${encodeURIComponent(path)}`;
 
@@ -380,12 +396,13 @@ async function refreshIndependentRuns(): Promise<void> {
     const { runs } = await api<{ runs: RunSummary[] }>("/api/lab/independent-runs");
     if (request !== independentListVersion) return;
     list.replaceChildren(...(runs.length ? runs.map((run) => {
+      const title = run.title && run.title !== "(no prompt)" ? run.title : run.id;
       const item = el("li", { className: `selectable${independentMode && shownRunId === run.id ? " active" : ""}`, tabIndex: 0 }, [
-        el("strong", { textContent: run.title || run.id }),
-        el("div", { className: "meta", textContent: `${run.id} · ${statusLabel(run.status)}` }),
+        el("strong", { textContent: title }),
+        el("div", { className: "meta", textContent: `${run.id} · ${executionState(run.status, run.purpose, run.completion)}` }),
       ]);
       item.setAttribute("role", "button");
-      item.setAttribute("aria-label", `Abrir resultado independente ${run.title || run.id}`);
+      item.setAttribute("aria-label", `Abrir resultado independente ${title}`);
       item.addEventListener("click", () => void showIndependentRun(run.id));
       item.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void showIndependentRun(run.id); }
@@ -767,23 +784,28 @@ async function showRun(runId: string): Promise<void> {
       if (independent) throw new Error("Esta execução pertence a um personagem. Abra-a pelo histórico desse personagem.");
       throw new Error("Esta execução não pertence ao personagem selecionado. A comparação foi bloqueada.");
     }
-    const detail = await api<RunDetail>(`/api/run?id=${encodeURIComponent(runId)}`);
+    const [detail, evidence] = await Promise.all([
+      api<RunDetail>(`/api/run?id=${encodeURIComponent(runId)}`),
+      api<RunEvidence>(`/api/lab/evidence?runId=${encodeURIComponent(runId)}`).catch(() => null),
+    ]);
     if (!isCurrent()) return;
+    const purpose = evidence?.purpose ?? binding.run?.purpose;
+    const localCompilation = isLocalCompilation(purpose);
     $("#result-card").hidden = false;
     if (independent) $("#character-key").textContent = detail.id;
 
     const verdict = $("#result-verdict");
     const artifact = [detail.painted, detail.final, detail.draft].find((item) => item?.objPath || item?.stlPath);
     const meshPath = artifact?.objPath ?? artifact?.stlPath ?? null;
-    const stage = artifact === detail.painted ? "Pintura" : artifact === detail.final ? "Final" : "Rascunho";
+    const stage = localCompilation ? "Geometria compilada" : artifact === detail.painted ? "Pintura" : artifact === detail.final ? "Final" : "Rascunho";
 
     verdict.replaceChildren(
     el("div", { className: "note info" }, [
       el("strong", { textContent: character ? `${character.record.bundle.name} · ${character.record.shortKey}` : "Resultado independente, sem personagem 2D associado" }),
-      el("div", { textContent: `Execução ${detail.id} · ${statusLabel(detail.status)}` }),
+      el("div", { textContent: `Execução ${detail.id} · ${executionState(detail.status, purpose, evidence?.completion)}` }),
       el("div", { textContent: meshPath ? `${stage} · arquivo exibido: ${meshPath}` : "Esta execução ainda não produziu uma malha." }),
       el("div", {
-        textContent: detail.verdict
+        textContent: localCompilation ? "Sem avaliação por modelo. Esta execução compilou o SCAD localmente, sem executar planejamento ou refino por IA." : detail.verdict
           ? `Veredito do refino: ${detail.verdict}`
           : "O refino não registrou um veredito para esta execução.",
       }),
@@ -798,7 +820,7 @@ async function showRun(runId: string): Promise<void> {
       el("pre", { className: "pre", textContent: detail.finalSummary }),
     ]));
     renderFiles(detail);
-    void renderEvidence(runId, isCurrent);
+    renderEvidence(evidence, isCurrent);
     void renderParams(runId, isCurrent, artifact === detail.draft ? "draft" : "final");
 
     const info = $("#mesh-info");
@@ -822,33 +844,29 @@ async function showRun(runId: string): Promise<void> {
   }
 }
 
-async function renderEvidence(runId: string, isCurrent: () => boolean): Promise<void> {
+function renderEvidence(data: RunEvidence | null, isCurrent: () => boolean): void {
   const host = $("#result-evidence");
   try {
-    const data = await api<{
-      purpose: string;
-      quality: { approval: string; verdict: string | null; stage: "draft"; finalSummary: string | null; omittedParts: string[]; floaterParts: string[]; errors: string[] };
-      elapsedMs: number | null;
-      usage: { inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
-      configuration: unknown;
-      artifacts: { path: string; sha256: string; bytes: number }[];
-    }>(`/api/lab/evidence?runId=${encodeURIComponent(runId)}`);
     if (!isCurrent()) return;
+    if (!data) throw new Error("O servidor não retornou as evidências desta execução.");
     const quality = data.quality;
-    const purpose = ({ generate: "Geração pelo pipeline Procedura", recompile: "Recompilação local de parâmetros, sem IA", "offline-compile": "Ensaio local: SCAD manual compilado, sem geração por IA" } as Record<string, string>)[data.purpose] ?? data.purpose;
+    const localCompilation = isLocalCompilation(data.purpose);
+    const purpose = ({ generate: "Geração pelo pipeline Procedura", recompile: "Recompilação local de parâmetros, sem IA", "offline-compile": "Ensaio local: SCAD manual compilado, sem geração por IA", unlinked: "Origem não documentada" } as Record<string, string>)[data.purpose] ?? data.purpose;
     host.replaceChildren(el("div", { className: "note warn" }, [
-      el("strong", { textContent: "Aprovação visual: revisão humana pendente" }),
+      el("strong", { textContent: localCompilation ? "Sem avaliação por modelo · revisão humana pendente" : "Aprovação visual: revisão humana pendente" }),
       el("div", { textContent: `Processo: ${purpose}.` }),
       el("div", { textContent: `Tempo registrado: ${data.elapsedMs === null ? "não disponível" : `${(data.elapsedMs / 1000).toFixed(1)} s`}. Tokens: entrada ${data.usage.inputTokens ?? "não disponível"}, saída ${data.usage.outputTokens ?? "não disponível"}. Custo: ${data.usage.costUsd === null ? "não informado pelo provedor" : `US$ ${data.usage.costUsd}`}.` }),
-      el("div", { textContent: `No rascunho — peças omitidas: ${quality.omittedParts.join(", ") || "nenhuma registrada"}; peças soltas: ${quality.floaterParts.join(", ") || "nenhuma registrada"}.` }),
-      el("div", { textContent: "Esses registros são da montagem inicial. O refino pode alterar as peças e a conectividade; eles não validam a malha final." }),
+      ...(!localCompilation ? [
+        el("div", { textContent: `No rascunho — peças omitidas: ${quality.omittedParts.join(", ") || "nenhuma registrada"}; peças soltas: ${quality.floaterParts.join(", ") || "nenhuma registrada"}.` }),
+        el("div", { textContent: "Esses registros são da montagem inicial. O refino pode alterar as peças e a conectividade; eles não validam a malha final." }),
+      ] : []),
       ...(quality.errors.length ? [el("ul", {}, quality.errors.map((error) => el("li", { textContent: error })))] : []),
     ]), ...(quality.finalSummary ? [el("details", {}, [
       el("summary", { textContent: "Evidência final registrada pelo pipeline" }),
       el("pre", { className: "pre", textContent: quality.finalSummary }),
-    ])] : [el("div", { className: "note info", textContent: "Nenhum resumo final registrado. A conectividade final não foi confirmada por estas evidências." })]), el("details", {}, [
+    ])] : localCompilation ? [] : [el("div", { className: "note info", textContent: "Nenhum resumo final registrado. A conectividade final não foi confirmada por estas evidências." })]), el("details", {}, [
       el("summary", { textContent: "Configuração e hashes dos artefatos" }),
-      el("pre", { className: "pre", textContent: JSON.stringify({ configuration: data.configuration, artifacts: data.artifacts }, null, 2) }),
+      el("pre", { className: "pre", textContent: JSON.stringify({ configuration: data.configuration, completion: data.completion, artifacts: data.artifacts }, null, 2) }),
     ]));
   } catch (e) {
     if (isCurrent()) host.replaceChildren(el("div", { className: "note info", textContent: `Registro de evidências indisponível: ${(e as Error).message}` }));
@@ -858,10 +876,34 @@ async function renderEvidence(runId: string, isCurrent: () => boolean): Promise<
 function renderFiles(detail: RunDetail): void {
   const list = $("#file-list");
   const shown = detail.files;
-  const renders = detail.files.filter((file) => /\.(png|jpe?g|webp)$/i.test(file.path));
-  $("#render-list").replaceChildren(...renders.map((file) => el("a", {
-    href: fileUrl(file.path), target: "_blank", rel: "noopener",
-  }, [el("img", { src: fileUrl(file.path), alt: file.path, loading: "lazy" }), el("span", { textContent: file.path })])));
+  // The scanner lists top-level files separately from images inside render
+  // directories. Only its explicit render collections belong in this gallery;
+  // image.png / image_input.png are input references, never generated renders.
+  const renders = new Map<string, { path: string; label: string }>();
+  const viewLabels: Record<string, string> = { front: "Frente", back: "Costas", left: "Esquerda", right: "Direita", top: "Topo", isometric: "Isométrica" };
+  const referencePath = detail.imagePath?.replace(/\\/g, "/");
+  const addViews = (views: ViewImage[] | undefined, stage: string) => {
+    for (const view of views ?? []) {
+      const path = view.path.replace(/\\/g, "/");
+      if (path === referencePath || !/\.(png|jpe?g|webp)$/i.test(path) || /(?:^|\/)image(?:_input)?\.[^/]+$/i.test(path)) continue;
+      if (!renders.has(path)) renders.set(path, { path, label: `${stage} · ${viewLabels[view.view] ?? view.view}` });
+    }
+  };
+  addViews(detail.previewViews, "Prévia final");
+  addViews(detail.previewPainted, "Pintura");
+  for (const cycle of detail.cycles ?? []) addViews(cycle.views, `Ciclo ${cycle.cycle} · antes da correção`);
+  for (const step of detail.renderSteps ?? []) {
+    addViews(step.ao, `Render ${step.step} · oclusão ambiente`);
+    addViews(step.partsColor, `Render ${step.step} · cores por peça`);
+  }
+  for (const part of detail.incremental?.parts ?? []) addViews(part.contextViews, `Montagem · ${part.name}`);
+  $("#render-list").replaceChildren(...[...renders.values()].map((render) => el("div", {}, [
+    el("a", { href: fileUrl(render.path), target: "_blank", rel: "noopener", title: render.path }, [
+      el("img", { src: fileUrl(render.path), alt: render.label, loading: "lazy" }),
+      el("span", { textContent: render.label }),
+    ]),
+    el("a", { href: `${fileUrl(render.path)}&download`, textContent: "Baixar imagem", title: render.path }),
+  ])));
   if (!shown.length) {
     list.replaceChildren(el("li", { textContent: "nenhum arquivo produzido" }));
     return;

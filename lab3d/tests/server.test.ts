@@ -157,6 +157,9 @@ describe("laboratory HTTP import and boundaries", () => {
   });
 
   test("evidence exposes real hashes and keeps quality explicitly unreviewed", async () => {
+    const preview = syntheticPng(8, 8);
+    mkdirSync(join(root, sourceRunId, "preview_final"));
+    writeFileSync(join(root, sourceRunId, "preview_final", "ao-front.png"), preview);
     const response = await request(`/api/lab/evidence?runId=${sourceRunId}`);
     expect(response.status).toBe(200);
     const body = await response.json() as any;
@@ -164,6 +167,7 @@ describe("laboratory HTTP import and boundaries", () => {
     expect(body.quality.approval).toBe("not-reviewed");
     expect(body.usage.costUsd).toBe(0);
     expect(body.artifacts.find((file: any) => file.path.endsWith("/final.scad")).sha256).toBe(sha256Hex(sourceText));
+    expect(body.artifacts.find((file: any) => file.path.endsWith("/preview_final/ao-front.png")).sha256).toBe(sha256Hex(preview));
     expect((await request("/api/lab/evidence?runId=..%2Foutside")).status).toBe(404);
   });
 });
@@ -186,6 +190,12 @@ describe("real local recompilation", () => {
     expect(evidence.characterKey).toBeNull();
     expect(evidence.purpose).toBe("recompile");
     expect(evidence.usage.costUsd).toBe(0);
+    expect(evidence.completion.ok).toBe(true);
+    const updated = await (await request("/api/lab/independent-runs")).json() as any;
+    const displayed = updated.runs.find((run: any) => run.id === result.runId);
+    expect(displayed.purpose).toBe("recompile");
+    expect(displayed.completion).toEqual({ ok: true });
+    expect(displayed.title).toContain("Recompilação de");
   });
 
   test.skipIf(!openscad.path)("external dependencies are refused before creating a misleading snapshot", async () => {

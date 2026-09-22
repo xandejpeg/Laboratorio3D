@@ -37,7 +37,7 @@ bun run lab3d/scripts/smoke-runtime.ts
 
 O script gera `report.json`, SCAD, STL, OBJ e imagens em uma pasta ignorada pelo Git. A fonte desta medição tem SHA-256 `978fcafe1e8859421b8c19cde80b8c64d17ad30e5e9b124204cb692003f6ca4a`.
 
-Após um ensaio bem sucedido, também publica `final.scad`, `final.stl`, `final.obj`, `prompt_input.txt` e os metadados `lab3d-execution.json`/`lab3d-completion.json`, reconhecidos pelo laboratório como `offline-compile`, sem personagem associado ou geração por IA. O destino padrão continua sendo `outputs/runtime-smoke/<data>/`; uma nova execução local foi preparada em `outputs/quality-mechanical/` para inspeção pela interface. Não é criado veredito ou resumo de aprovação visual.
+Após um ensaio bem sucedido, também publica `final.scad`, `final.stl`, `final.obj`, `prompt.txt` (e sua cópia `prompt_input.txt`), os renders reais em `preview_final/` e os metadados `lab3d-execution.json`/`lab3d-completion.json`, reconhecidos pelo laboratório como `offline-compile`, sem personagem associado ou geração por IA. O destino padrão continua sendo `outputs/runtime-smoke/<data>/`; uma nova execução local foi preparada em `outputs/quality-mechanical/` para inspeção pela interface. Não é criado veredito ou resumo de aprovação visual.
 
 ```powershell
 bun run lab3d/scripts/smoke-runtime.ts outputs/quality-mechanical
