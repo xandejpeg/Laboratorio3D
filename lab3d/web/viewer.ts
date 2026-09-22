@@ -198,7 +198,13 @@ export function createViewer(host: HTMLElement): ViewerHandle {
       const mesh = child as THREE.Mesh;
       if (!mesh.isMesh) return;
       const replace = (old: THREE.Material) => {
-        const next = palette.get(old.name) ?? material;
+        let next = palette.get(old.name) ?? material;
+        // OBJ's optional per-vertex RGB stores the actual exported surface paint.
+        // Clone so mixed colored/uncolored meshes never mutate a shared material.
+        if (mesh.geometry.getAttribute("color")) {
+          next = next.clone();
+          next.vertexColors = true;
+        }
         old.dispose();
         used.add(next);
         return next;

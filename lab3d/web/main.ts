@@ -71,6 +71,7 @@ interface CharacterRun {
   purpose: string;
   createdAt: string;
   referenceFile: string | null;
+  options?: { mode?: string };
 }
 
 interface JobRecord {
@@ -102,7 +103,7 @@ interface RunEvidence {
   quality: { approval: string; verdict: string | null; stage: "draft"; finalSummary: string | null; omittedParts: string[]; floaterParts: string[]; errors: string[] };
   elapsedMs: number | null;
   usage: { inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
-  configuration: unknown;
+  configuration: { options?: { mode?: string }; [key: string]: unknown } | null;
   artifacts: { path: string; sha256: string; bytes: number }[];
 }
 
@@ -394,7 +395,7 @@ async function selectCharacter(key: string): Promise<void> {
   $("#brief-text").textContent = data.brief.text;
   renderRuns(data.runs);
   updateGenerationAvailability();
-  await refreshReadyRuns();
+  await refreshReadyRuns(true);
   if (version === selectionVersion) await refreshCharacters();
 }
 
@@ -591,7 +592,7 @@ function renderRuns(runs: CharacterRun[]): void {
       follow.addEventListener("click", () => followJob(run.jobId));
       return el("li", {}, [
         el("div", { className: "row" }, [
-          el("strong", { textContent: run.purpose === "generate" ? "Geração" : "Recompilação" }),
+          el("strong", { textContent: run.options?.mode === "codex-authored-local" ? "Modelo criado por Codex" : run.purpose === "generate" ? "Geração" : "Recompilação" }),
           el("span", { className: "meta", textContent: new Date(run.createdAt).toLocaleString() }),
         ]),
         el("div", { className: "meta" }, [el("code", { textContent: run.runId })]),
@@ -658,7 +659,7 @@ function wireGenerate(): void {
 }
 
 /** Only runs bound to the selected immutable import may share its reference. */
-async function refreshReadyRuns(): Promise<void> {
+async function refreshReadyRuns(openLatest = false): Promise<void> {
   const request = ++readyVersion;
   const character = selected;
   const version = selectionVersion;
@@ -683,6 +684,13 @@ async function refreshReadyRuns(): Promise<void> {
   );
   if (withMesh.some((run) => run.id === preferredId)) select.value = preferredId;
   $<HTMLButtonElement>("#open-ready").disabled = !withMesh.length;
+  // Returning to an immutable character should restore its actual saved geometry.
+  // Retain the selection/race guards above and never replace a manually opened run.
+  if (openLatest && !shownRunId && withMesh.length) {
+    const latest = withMesh.find((run) => run.hasFinalMesh) ?? withMesh[0]!;
+    select.value = latest.id;
+    await showRun(latest.id);
+  }
 }
 
 function closeStream(): void {
@@ -801,6 +809,7 @@ async function showRun(runId: string): Promise<void> {
     if (!isCurrent()) return;
     const purpose = evidence?.purpose ?? binding.run?.purpose;
     const localCompilation = isLocalCompilation(purpose);
+    const codexAuthored = binding.run?.options?.["mode"] === "codex-authored-local";
     $("#result-card").hidden = false;
     if (independent) $("#character-key").textContent = detail.id;
 
@@ -815,7 +824,7 @@ async function showRun(runId: string): Promise<void> {
       el("div", { textContent: `Execução ${detail.id} · ${executionState(detail.status, purpose, evidence?.completion)}` }),
       el("div", { textContent: meshPath ? `${stage} · arquivo exibido: ${meshPath}` : "Esta execução ainda não produziu uma malha." }),
       el("div", {
-        textContent: localCompilation ? "Sem avaliação por modelo. Esta execução compilou o SCAD localmente, sem executar planejamento ou refino por IA." : detail.verdict
+        textContent: codexAuthored ? "Modelo construído por Codex nesta conversa, compilado no OpenSCAD e renderizado no Blender. O gerador automático por API não foi executado." : localCompilation ? "Sem avaliação por modelo. Esta execução compilou o SCAD localmente, sem executar planejamento ou refino por IA." : detail.verdict
           ? `Veredito do refino: ${detail.verdict}`
           : "O refino não registrou um veredito para esta execução.",
       }),
@@ -861,9 +870,10 @@ function renderEvidence(data: RunEvidence | null, isCurrent: () => boolean): voi
     if (!data) throw new Error("O servidor não retornou as evidências desta execução.");
     const quality = data.quality;
     const localCompilation = isLocalCompilation(data.purpose);
-    const purpose = ({ generate: "Geração pelo pipeline Procedura", recompile: "Recompilação local de parâmetros, sem IA", "offline-compile": "Ensaio local: SCAD manual compilado, sem geração por IA", unlinked: "Origem não documentada" } as Record<string, string>)[data.purpose] ?? data.purpose;
+    const codexAuthored = data.configuration?.["options"]?.["mode"] === "codex-authored-local";
+    const purpose = codexAuthored ? "Reconstrução escrita por Codex nesta conversa; OpenSCAD e Blender locais, sem API externa" : ({ generate: "Geração pelo pipeline Procedura", recompile: "Recompilação local de parâmetros, sem IA", "offline-compile": "Ensaio local: SCAD manual compilado, sem geração por IA", unlinked: "Origem não documentada" } as Record<string, string>)[data.purpose] ?? data.purpose;
     host.replaceChildren(el("div", { className: "note warn" }, [
-      el("strong", { textContent: localCompilation ? "Sem avaliação por modelo · revisão humana pendente" : "Aprovação visual: revisão humana pendente" }),
+      el("strong", { textContent: codexAuthored ? "Modelo local · validação visual do usuário pendente" : localCompilation ? "Sem avaliação por modelo · revisão humana pendente" : "Aprovação visual: revisão humana pendente" }),
       el("div", { textContent: `Processo: ${purpose}.` }),
       el("div", { textContent: `Tempo registrado: ${data.elapsedMs === null ? "não disponível" : `${(data.elapsedMs / 1000).toFixed(1)} s`}. Tokens: entrada ${data.usage.inputTokens ?? "não disponível"}, saída ${data.usage.outputTokens ?? "não disponível"}. Custo: ${data.usage.costUsd === null ? "não informado pelo provedor" : `US$ ${data.usage.costUsd}`}.` }),
       ...(!localCompilation ? [

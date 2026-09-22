@@ -12,7 +12,13 @@ compilação → render no Blender → avaliação visual → correções → ex
 ```
 
 O visualizador mostra **a geometria que o sistema produziu** — o OBJ/STL escrito
-pela execução. Não há personagem genérico montado à mão.
+pela execução. Ao abrir um personagem, ele restaura a malha mais recente vinculada
+àquela importação. Também preserva as cores por vértice exportadas no OBJ, além
+dos materiais MTL; não busca texturas externas declaradas pelo arquivo.
+
+Reconstruções locais escritas por Codex são identificadas como tal. Elas podem
+usar a compilação e os renders reais do Procedura sem chamar o provedor externo;
+não são apresentadas como uma execução do planejamento/refino automático por API.
 
 ## Começar
 
