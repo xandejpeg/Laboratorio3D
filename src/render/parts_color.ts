@@ -14,6 +14,8 @@
 
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { stopProcessTree } from "../runtime/process.ts";
 
 import { BLENDER_BIN } from "./ao.ts";
 import type { RenderedView } from "./ao.ts";
@@ -25,7 +27,7 @@ import { deviceLine } from "./device_line.ts";
 // Re-exported for back-compat with existing importers.
 export { DEFAULT_PALETTE };
 
-const SRC_RENDER_DIR = resolve(dirname(new URL(import.meta.url).pathname));
+const SRC_RENDER_DIR = dirname(fileURLToPath(import.meta.url));
 const PROCEDURA_ROOT = resolve(SRC_RENDER_DIR, "..", "..");
 export const PARTS_COLOR_RENDER_SCRIPT = join(
   PROCEDURA_ROOT, "scripts", "_render_parts_color_blender.py",
@@ -121,6 +123,7 @@ export async function renderPartsColorViews(
 
   const args = [
     "--background",
+    "--python-exit-code", "1",
     "--python", PARTS_COLOR_RENDER_SCRIPT, "--",
     "--out", outDir,
     "--views", views.join(","),
@@ -135,7 +138,7 @@ export async function renderPartsColorViews(
 
   const tBlender = Date.now();
   const proc = Bun.spawn([BLENDER_BIN, ...args], { stdout: "pipe", stderr: "pipe" });
-  const killer = setTimeout(() => proc.kill(), timeoutMs);
+  const killer = setTimeout(() => stopProcessTree(proc.pid), timeoutMs);
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

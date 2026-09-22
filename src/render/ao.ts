@@ -16,6 +16,9 @@
 
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { resolveBlenderPath } from "../runtime/binaries.ts";
+import { stopProcessTree } from "../runtime/process.ts";
 
 import { DEFAULT_VIEWS, type ViewName } from "./views.ts";
 import { addStage } from "../pipeline/stage-timer.ts";
@@ -28,29 +31,13 @@ export type AOView = ViewName;
 
 // scripts/_render_ao_blender.py is a sibling asset of this TS module's dir.
 // dirname(import.meta.url) → .../Procedura/src/render
-const SRC_RENDER_DIR = resolve(dirname(new URL(import.meta.url).pathname));
+const SRC_RENDER_DIR = dirname(fileURLToPath(import.meta.url));
 const PROCEDURA_ROOT = resolve(SRC_RENDER_DIR, "..", "..");
 export const AO_RENDER_SCRIPT = join(PROCEDURA_ROOT, "scripts", "_render_ao_blender.py");
 
 /** First existing wins; a bare `blender` on $PATH is the last resort. Set
  *  PROCEDURA_BLENDER_PATH to skip the search entirely. */
-const BLENDER_CANDIDATES = [
-  join(process.env["HOME"] ?? "", "opt", "blender", "blender"),
-  "/usr/local/bin/blender",
-  "/opt/blender/blender",
-  "blender",
-];
-
-function resolveBlenderBin(): string {
-  const fromEnv = process.env["PROCEDURA_BLENDER_PATH"];
-  if (fromEnv) return fromEnv;
-  for (const c of BLENDER_CANDIDATES) {
-    try { if (existsSync(c)) return c; } catch { /* unreadable mount — keep looking */ }
-  }
-  return BLENDER_CANDIDATES[0]!; // report the canonical path in the "not found" error
-}
-
-export const BLENDER_BIN = resolveBlenderBin();
+export const BLENDER_BIN = resolveBlenderPath() ?? "blender";
 
 export interface RenderAOOpts {
   stlPath: string;
@@ -112,6 +99,7 @@ export async function renderAOViews(opts: RenderAOOpts): Promise<RenderAOResult>
 
   const args = [
     "--background",
+    "--python-exit-code", "1",
     "--python", AO_RENDER_SCRIPT, "--",
     "--mesh", stl,
     "--out", outDir,
@@ -131,7 +119,7 @@ export async function renderAOViews(opts: RenderAOOpts): Promise<RenderAOResult>
   const proc = Bun.spawn([BLENDER_BIN, ...args], {
     stdout: "pipe", stderr: "pipe",
   });
-  const killer = setTimeout(() => proc.kill(), timeoutMs);
+  const killer = setTimeout(() => stopProcessTree(proc.pid), timeoutMs);
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

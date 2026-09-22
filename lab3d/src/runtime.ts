@@ -1,156 +1,79 @@
-/**
- * Runtime probing for Windows.
- *
- * Upstream resolves OpenSCAD and Blender from `$HOME/opt/...`, `/usr/local/bin`
- * and `/opt` (src/scad/compile.ts, src/render/ao.ts). None of those exist on
- * Windows, so this module probes the real install locations and reports what
- * is genuinely usable. It does not patch upstream: it produces the values that
- * belong in `.env` (`OPENSCAD_PATH`, `PROCEDURA_BLENDER_PATH`), which upstream
- * reads first.
- */
-
-import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+/** Local executable/credential probes only. Never makes a provider request. */
+import { MODEL_CATALOG } from "../../src/config/models.ts";
+import { openscadCandidates, resolveBlenderPath, probeBinary, type RuntimeEnv } from "../../src/runtime/binaries.ts";
 
 export interface BinaryProbe {
   name: string;
   path: string | null;
   version: string | null;
-  /** OpenSCAD only: a non-Manifold build is orders of magnitude slower. */
   manifold?: boolean;
   envVar: string;
   notes: string[];
 }
 
-function run(bin: string, args: string[]): { ok: boolean; out: string } {
-  try {
-    const r = Bun.spawnSync([bin, ...args], { stdout: "pipe", stderr: "pipe" });
-    return { ok: r.exitCode === 0, out: `${r.stdout.toString()}\n${r.stderr.toString()}` };
-  } catch {
-    return { ok: false, out: "" };
-  }
-}
-
-function firstExisting(candidates: string[]): string | null {
-  for (const c of candidates) {
-    try {
-      if (existsSync(c)) return c;
-    } catch {
-      /* unreadable mount */
+export function probeOpenscad(env: RuntimeEnv = process.env): BinaryProbe {
+  const notes: string[] = [];
+  let fallback: { path: string; version: string } | undefined;
+  for (const path of openscadCandidates(env)) {
+    const version = probeBinary(path, ["--version"]);
+    if (!version.ok || !version.output.includes("OpenSCAD")) continue;
+    const firstLine = version.output.split(/\r?\n/)[0]!;
+    fallback ??= { path, version: firstLine };
+    if (probeBinary(path, ["--help"]).output.includes("--backend")) {
+      if (env.OPENSCAD_PATH && env.OPENSCAD_PATH !== path) notes.push("OPENSCAD_PATH não funcionou com Manifold; outra instalação compatível foi encontrada.");
+      return { name: "OpenSCAD", path, version: firstLine, manifold: true, envVar: "OPENSCAD_PATH", notes };
     }
   }
-  return null;
+  if (fallback) {
+    notes.push("A instalação encontrada não oferece Manifold. A geração é bloqueada sem PROCEDURA_ALLOW_CGAL_OPENSCAD=1; compilações CGAL podem ser muito mais lentas.");
+    return { name: "OpenSCAD", ...fallback, manifold: false, envVar: "OPENSCAD_PATH", notes };
+  }
+  notes.push("OpenSCAD executável não encontrado; geração e recompilação de geometria estão indisponíveis.");
+  return { name: "OpenSCAD", path: null, version: null, manifold: false, envVar: "OPENSCAD_PATH", notes };
 }
 
-function programFiles(): string[] {
-  return [
-    process.env["ProgramFiles"] ?? "C:\\Program Files",
-    process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
-    process.env["LOCALAPPDATA"] ? join(process.env["LOCALAPPDATA"]!, "Programs") : "",
-  ].filter(Boolean);
-}
-
-/** Directories named `OpenSCAD*` under a base — the snapshot ZIP unpacks as `OpenSCAD-<date>-x86-64`. */
-function openscadDirs(base: string): string[] {
-  try {
-    return readdirSync(base)
-      .filter((name) => name.toLowerCase().startsWith("openscad"))
-      .sort()
-      .reverse()
-      .map((name) => join(base, name, "openscad.exe"));
-  } catch {
-    return [];
+export function probeBlender(env: RuntimeEnv = process.env): BinaryProbe {
+  const path = resolveBlenderPath(env);
+  const result = path ? probeBinary(path, ["--version"]) : null;
+  if (!path || !result?.ok || !result.output.includes("Blender")) {
+    return { name: "Blender", path: null, version: null, envVar: "PROCEDURA_BLENDER_PATH",
+      notes: ["Blender executável não encontrado; renderização e avaliação visual estão indisponíveis."] };
   }
-}
-
-export function probeOpenscad(): BinaryProbe {
-  const notes: string[] = [];
-  const fromEnv = process.env["OPENSCAD_PATH"];
-  const candidates = [
-    ...(fromEnv ? [fromEnv] : []),
-    ...programFiles().flatMap(openscadDirs),
-    join(homedir(), "opt", "openscad", "openscad.exe"),
-  ];
-  let path = firstExisting(candidates);
-  if (!path) {
-    const which = run("where.exe", ["openscad"]);
-    const line = which.out.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith(".exe"));
-    if (which.ok && line) path = line.trim();
-  }
-  if (!path) {
-    notes.push(
-      "OpenSCAD not found. Without it no geometry can be compiled: the pipeline cannot produce a mesh, " +
-        "and parameter recompilation is unavailable.",
-    );
-    return { name: "OpenSCAD", path: null, version: null, manifold: false, envVar: "OPENSCAD_PATH", notes };
-  }
-  const help = run(path, ["--help"]);
-  const manifold = help.out.includes("--backend");
-  if (!manifold) {
-    notes.push(
-      "This build does not advertise --backend, so it is not Manifold-capable. Upstream refuses to run " +
-        "unless PROCEDURA_ALLOW_CGAL_OPENSCAD=1, and CGAL is orders of magnitude slower.",
-    );
-  }
-  const version = run(path, ["--version"]).out.trim().split(/\r?\n/)[0] ?? null;
-  return { name: "OpenSCAD", path, version, manifold, envVar: "OPENSCAD_PATH", notes };
-}
-
-export function probeBlender(): BinaryProbe {
-  const notes: string[] = [];
-  const fromEnv = process.env["PROCEDURA_BLENDER_PATH"];
-  const candidates: string[] = fromEnv ? [fromEnv] : [];
-  for (const base of programFiles()) {
-    const root = join(base, "Blender Foundation");
-    try {
-      if (!existsSync(root)) continue;
-      for (const dir of readdirSync(root)) candidates.push(join(root, dir, "blender.exe"));
-    } catch {
-      /* unreadable */
-    }
-  }
-  // Newest install wins when several versions are present.
-  candidates.sort().reverse();
-  let path = firstExisting(candidates);
-  if (!path) {
-    const which = run("where.exe", ["blender"]);
-    const line = which.out.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith(".exe"));
-    if (which.ok && line) path = line.trim();
-  }
-  if (!path) {
-    notes.push("Blender not found. The refine loop cannot render the model, so visual critique is unavailable.");
-    return { name: "Blender", path: null, version: null, envVar: "PROCEDURA_BLENDER_PATH", notes };
-  }
-  const version = run(path, ["--version"]).out.trim().split(/\r?\n/)[0] ?? null;
-  return { name: "Blender", path, version, envVar: "PROCEDURA_BLENDER_PATH", notes };
+  return { name: "Blender", path, version: result.output.split(/\r?\n/)[0]!, envVar: "PROCEDURA_BLENDER_PATH", notes: [] };
 }
 
 export interface LlmProbe {
   configured: boolean;
+  provider: "openai" | "gemini";
   baseUrl: string;
   model: string;
   imageGeneration: boolean;
   notes: string[];
 }
 
-export function probeLlm(env: Record<string, string | undefined> = process.env): LlmProbe {
-  const key = env["OPENAI_API_KEY"] ?? "";
-  const gemini = env["GEMINI_API_KEY"] ?? "";
-  const notes: string[] = [];
-  const configured = Boolean(key || gemini);
-  if (!configured) {
-    notes.push(
-      "No LLM credential is set. Planning, part generation and refinement all call a model, so generation " +
-        "cannot start. Import, the registry, the brief and the viewer work without it.",
-    );
-  }
+/** Never expose URL credentials, query tokens or fragments in diagnostics/API. */
+function publicEndpoint(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch { return "endpoint inválido"; }
+}
+
+export function probeLlm(env: RuntimeEnv = process.env): LlmProbe {
+  const model = env.PROCEDURA_MODEL ?? "gpt-5.2";
+  const prefix = /^(openai|gemini):.+$/.exec(model)?.[1];
+  const provider = (prefix ?? MODEL_CATALOG[model]?.ref.providerId ?? (env.PROCEDURA_PROVIDER === "gemini" ? "gemini" : "openai")) as "openai" | "gemini";
+  const keyName = provider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY";
+  const configured = Boolean(env[keyName]?.trim());
+  const notes = configured
+    ? ["Credencial presente para o transporte selecionado; acesso ao modelo, orçamento e geração ainda não foram validados."]
+    : [`Credencial ${keyName} ausente para o modelo selecionado. Importação, briefing e visualização continuam disponíveis; geração requer configuração e orçamento autorizado.`];
   return {
-    configured,
-    baseUrl: env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1",
-    model: env["PROCEDURA_MODEL"] ?? "gpt-5.2",
-    imageGeneration: Boolean(env["PROCEDURA_IMAGE_MODEL"]),
-    notes,
+    configured, provider, model,
+    baseUrl: publicEndpoint(provider === "gemini"
+      ? env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta"
+      : env.OPENAI_BASE_URL ?? "https://api.openai.com/v1"),
+    imageGeneration: Boolean(env.PROCEDURA_IMAGE_MODEL), notes,
   };
 }
 
@@ -160,32 +83,29 @@ export interface RuntimeReport {
   openscad: BinaryProbe;
   blender: BinaryProbe;
   llm: LlmProbe;
-  /** What the lab can actually do right now, given the probes above. */
   capabilities: {
     import: boolean;
     brief: boolean;
     generate: boolean;
     recompileParams: boolean;
+    render: boolean;
     visualCritique: boolean;
   };
 }
 
-export function probeRuntime(env: Record<string, string | undefined> = process.env): RuntimeReport {
-  const openscad = probeOpenscad();
-  const blender = probeBlender();
+export function probeRuntime(env: RuntimeEnv = process.env): RuntimeReport {
+  const openscad = probeOpenscad(env);
+  const blender = probeBlender(env);
   const llm = probeLlm(env);
+  const canCompile = Boolean(openscad.path) && (Boolean(openscad.manifold) || env.PROCEDURA_ALLOW_CGAL_OPENSCAD === "1");
   return {
-    platform: `${process.platform} ${process.arch}`,
-    bun: Bun.version,
-    openscad,
-    blender,
-    llm,
+    platform: `${process.platform} ${process.arch}`, bun: Bun.version, openscad, blender, llm,
     capabilities: {
-      import: true,
-      brief: true,
-      generate: Boolean(openscad.path) && llm.configured,
-      recompileParams: Boolean(openscad.path),
-      visualCritique: Boolean(blender.path),
+      import: true, brief: true,
+      generate: canCompile && Boolean(blender.path) && llm.configured,
+      recompileParams: canCompile,
+      render: Boolean(blender.path),
+      visualCritique: Boolean(blender.path) && llm.configured,
     },
   };
 }

@@ -22,23 +22,20 @@ import { join, resolve, dirname } from "node:path";
 import { loadSTL } from "../mesh/stl.ts";
 import { writeOBJ } from "../mesh/obj.ts";
 import { addStage } from "../pipeline/stage-timer.ts";
+import { openscadCandidates, probeBinary } from "../runtime/binaries.ts";
+import { stopProcessTree } from "../runtime/process.ts";
 
 /**
  * Searched in order when OPENSCAD_PATH is unset, after a bare `openscad` on
  * $PATH. These are the conventional places a hand-installed AppImage lands;
  * point OPENSCAD_PATH at yours if it lives somewhere else.
  */
-const OPENSCAD_CANDIDATES = [
-  join(process.env["HOME"] ?? "", "opt", "openscad"),
-  "/usr/local/bin/openscad",
-  "/opt/openscad/openscad",
-];
+const OPENSCAD_CANDIDATES = openscadCandidates();
 
 /** `--help` output of a binary, or "" if it could not be run. */
 function probeHelp(bin: string): string {
   try {
-    const p = Bun.spawnSync([bin, "--help"], { stdout: "pipe", stderr: "pipe" });
-    return p.stdout.toString() + p.stderr.toString();
+    return probeBinary(bin, ["--help"]).output;
   } catch {
     return "";
   }
@@ -57,7 +54,7 @@ function resolveOpenscadPath(): {
   path: string; manifold: boolean; tried: string[]; help: string;
 } {
   const fromEnv = process.env["OPENSCAD_PATH"];
-  const ordered = [...(fromEnv ? [fromEnv] : []), "openscad", ...OPENSCAD_CANDIDATES];
+  const ordered = OPENSCAD_CANDIDATES;
   const tried: string[] = [];
   let lastHelp = "";
   for (const c of ordered) {
@@ -217,16 +214,19 @@ export async function compileScad(
   const proc = Bun.spawn([OPENSCAD_PATH, ...args], {
     stdout: "pipe", stderr: "pipe",
   });
-  const timer = opts.timeoutMs
-    ? setTimeout(() => proc.kill(), opts.timeoutMs)
-    : setTimeout(() => proc.kill(), 600_000);
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  await proc.exited;
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; stopProcessTree(proc.pid); }, opts.timeoutMs ?? 600_000);
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
+  ]);
   clearTimeout(timer);
   const durationMs = Date.now() - t0;
   addStage("openscad.total", durationMs);
-  const exitCode = proc.exitCode;
+  const exitCode = timedOut ? null : proc.exitCode;
+  if (timedOut) throw new Error(`OpenSCAD timed out after ${opts.timeoutMs ?? 600_000} ms`);
+  if (exitCode !== 0 && !opts.softFail) {
+    throw new Error(`OpenSCAD failed (exit ${exitCode}).\nstderr: ${stderr.slice(-2000)}`);
+  }
 
   if (!existsSync(stlPath)) {
     // No STL. In softFail mode this is a valid outcome the caller classifies

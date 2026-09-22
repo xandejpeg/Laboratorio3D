@@ -1,155 +1,94 @@
 # Instalação e execução no Windows
 
-O instalador upstream (`scripts/install-deps.sh`) é um script bash escrito para
-Linux: ele baixa AppImages, usa `apt` e grava em `$HOME/opt`. **Nada disso vale
-aqui.** Este documento descreve o caminho que foi efetivamente verificado nesta
-máquina.
+O caminho validado neste marco é **Windows nativo**, com Bun, OpenSCAD Manifold e Blender chamado em segundo plano pelos scripts Python do Procedura. Isaac Sim não foi instalado nem usado. O instalador `scripts/install-deps.sh` foi escrito para Linux e não é o instalador Windows.
 
-Confira o estado real a qualquer momento:
+## Ambiente observado em 22/09/2026
+
+| Dependência | Resultado local |
+| --- | --- |
+| Bun | 1.3.8; satisfaz `engines.bun >=1.3`; manifest upstream registra `packageManager bun@1.3.14` |
+| OpenSCAD | 2026.09.18, backend Manifold presente; `%LOCALAPPDATA%\Programs\OpenSCAD-2026.09.18-x86-64\openscad.exe` |
+| Blender | 5.2.1 LTS; `%ProgramFiles%\Blender Foundation\Blender 5.2\blender.exe` |
+| Python externo | 3.12.10 disponível; o render usa o Python embutido no Blender |
+| WSL | somente `docker-desktop`, parado; não há distribuição Linux de desenvolvimento validada |
+| Provedor de modelo | sem credencial para o transporte OpenAI selecionado pelo modelo default |
+
+Esses binários já estavam instalados. A presença de WSL não significa que Ubuntu ou o instalador upstream tenham sido testados. Não foi necessário instalar outra distribuição ou mudar o PATH.
+
+## Preparar o repositório
+
+Abra PowerShell na pasta do clone:
 
 ```powershell
+bun install --frozen-lockfile
+bun install --cwd lab3d --frozen-lockfile
 bun run lab3d/scripts/doctor.ts
 ```
 
----
+O `doctor` verifica se os executáveis realmente respondem, mostra versões e distingue renderização local de avaliação visual por modelo. Nunca faz uma chamada ao provedor. O estado `configurado` indica presença da credencial do transporte selecionado, sem validar disponibilidade comercial do modelo, acesso ou orçamento.
 
-## 1. Bun — necessário
+A descoberta é compartilhada com o núcleo do Procedura. No Windows procura instalações `OpenSCAD*` e `Blender Foundation\Blender*` em `%ProgramFiles%`, `%ProgramFiles(x86)%` e `%LOCALAPPDATA%\Programs`, além do PATH. Um override de Blender tem precedência; OpenSCAD preserva a preferência upstream por uma instalação com Manifold.
 
-Verificado: **Bun 1.3.8** em `C:\Users\xandao\.bun\bin\bun.exe`.
+Para uma instalação portátil em outro local, defina na sessão ou no `.env` da raiz:
+
+```dotenv
+OPENSCAD_PATH=D:\ferramentas\OpenSCAD\openscad.exe
+PROCEDURA_BLENDER_PATH=D:\ferramentas\Blender\blender.exe
+```
+
+O OpenSCAD precisa anunciar `--backend` no `--help`. A alternativa explícita `PROCEDURA_ALLOW_CGAL_OPENSCAD=1` permite o backend antigo, com risco de compilações muito mais demoradas; CGAL não foi usado neste marco. Não execute o instalador Bash upstream no Windows nativo.
+
+## Validar sem chamadas pagas
 
 ```powershell
-irm bun.sh/install.ps1 | iex
+bun run typecheck
+bun run --cwd lab3d typecheck
+bun test lab3d/tests
+bun run lab3d/scripts/smoke-runtime.ts
 ```
 
-Instale as dependências nos dois pacotes:
+O smoke usa somente `lab3d/tests/fixtures/mechanical-bracket.scad`, uma peça sintética. Compila STL/OBJ por OpenSCAD, renderiza quatro vistas por Blender/Cycles em CPU, recompila parâmetros, verifica invalidação do cache após mudança da fonte e rejeita SCAD inválido. Não importa o orquestrador LLM nem gera referência por API.
+
+Os arquivos são gravados em `outputs/runtime-smoke/<data>/`, ignorados pelo Git. Pode passar uma pasta explícita como único argumento; caminhos com espaços foram testados. O relatório JSON registra versão, configuração, duração, geometria e ausência de chamadas a modelos. Resultados e uploads particulares continuam fora do Git.
+
+O teste valida a cadeia de execução geométrica. Planejamento, autoria e correções pelo modelo continuam pendentes de configuração autorizada. Veja [MECANICO_OFFLINE.md](MECANICO_OFFLINE.md) para os resultados medidos.
+
+## Iniciar o laboratório
 
 ```powershell
-cd C:\Users\xandao\Documents\GitHub\Laboratorio3D
-bun install
-cd lab3d
-bun install
-```
-
-A instalação na raiz não é opcional: o gerenciador de execuções só dispara a CLI
-quando `node_modules/` existe na raiz do repositório.
-
-## 2. OpenSCAD — necessário para gerar geometria
-
-Sem OpenSCAD o pipeline não compila nenhuma peça: não há malha, não há render,
-não há recompilação de parâmetros. A interface informa isso e `/api/lab/generate`
-responde `503` em vez de fingir progresso.
-
-Verificado: **OpenSCAD 2026.09.18** em
-`%LOCALAPPDATA%\Programs\OpenSCAD-2026.09.18-x86-64\openscad.exe`, com backend
-**Manifold** confirmado.
-
-Exija uma build **com backend Manifold** (snapshot de desenvolvimento). Uma
-build antiga com CGAL é ordens de magnitude mais lenta e o próprio upstream se
-recusa a usá-la a menos que `PROCEDURA_ALLOW_CGAL_OPENSCAD=1` esteja definido.
-
-O caminho usado aqui, sem exigir elevação:
-
-1. Baixe o ZIP portátil de <https://openscad.org/downloads.html> (seção
-   *Development Snapshots*, Windows 64-bit) e o `.sha256` correspondente.
-2. Confira o hash antes de extrair:
-
-   ```powershell
-   Get-FileHash .\OpenSCAD-<versão>-x86-64.zip -Algorithm SHA256
-   ```
-
-3. Extraia em `%LOCALAPPDATA%\Programs\`. O instalador `.exe` do snapshot é um
-   NSIS que pede elevação; o ZIP evita isso.
-4. Se preferir outro diretório, aponte o caminho no `.env` da raiz:
-
-   ```
-   OPENSCAD_PATH=D:\ferramentas\openscad\openscad.exe
-   ```
-
-O laboratório procura, nesta ordem: `OPENSCAD_PATH`, qualquer diretório
-`OpenSCAD*` em `%ProgramFiles%`, `%ProgramFiles(x86)%` e
-`%LOCALAPPDATA%\Programs` (o mais recente primeiro), e por fim
-`where.exe openscad`. O caminho encontrado é injetado no ambiente do processo
-filho, porque o upstream só procura em `$HOME/opt`, `/usr/local/bin` e `/opt`.
-
-Confirme o backend depois de instalar: o `doctor` imprime `manifold sim/NÃO`.
-
-## 3. Blender — necessário para a crítica visual
-
-Verificado: **Blender 5.2.1 LTS** em
-`C:\Program Files\Blender Foundation\Blender 5.2\blender.exe`. Ele **não está no
-PATH**, e não precisa estar — o laboratório varre `Blender Foundation\*` e
-escolhe a versão mais recente, repassando o caminho ao processo filho.
-
-Para fixar outra instalação:
-
-```
-PROCEDURA_BLENDER_PATH=C:\Program Files\Blender Foundation\Blender 4.2\blender.exe
-```
-
-## 4. Modelo de linguagem — necessário para gerar (NÃO CONFIGURADO)
-
-Planejamento, geração das peças e refino são chamadas a um modelo. Sem
-credencial não há geração, e o laboratório diz isso em vez de simular.
-
-Copie `.env.example` para `.env` na raiz e preencha:
-
-```
-OPENAI_API_KEY=...
-OPENAI_BASE_URL=https://api.openai.com/v1
-PROCEDURA_MODEL=gpt-5.2
-```
-
-Também há suporte a `GEMINI_API_KEY` / `GEMINI_BASE_URL` e a
-`PROCEDURA_PROVIDER`. O `.env` está no `.gitignore`; nenhuma credencial entra no
-repositório público.
-
-**Isto gera custo por execução.** Confirme provedor, modelo e orçamento antes de
-disparar um ensaio.
-
-## 5. Python
-
-Verificado: **Python 3.12.10**. Só é exigido pelas etapas de movimento
-(Isaac/URDF), que não fazem parte deste marco.
-
----
-
-## 6. Executar
-
-```powershell
-cd C:\Users\xandao\Documents\GitHub\Laboratorio3D
 bun run lab3d/server.ts
 ```
 
-Abra <http://127.0.0.1:8770>.
-
-O servidor escuta **somente em 127.0.0.1**. Isto é uma diferença deliberada em
-relação ao Studio upstream, que escuta em `0.0.0.0` sem autenticação: ele expõe
-leitura e escrita de arquivos e execução de processos, e não deve ficar
-acessível na rede.
-
-Variáveis de ambiente do laboratório:
+Abra [http://127.0.0.1:8770](http://127.0.0.1:8770). O serviço fica restrito a `127.0.0.1`; a instância upstream do Studio não deve ser exposta à rede nesta etapa.
 
 | Variável | Padrão | Função |
-|----------|--------|--------|
-| `LAB3D_PORT` | `8770` | Porta |
-| `LAB3D_OUTPUTS_ROOT` | `<repo>/outputs` | Raiz das execuções e do registro |
+| --- | --- | --- |
+| `LAB3D_PORT` | `8770` | Porta; escolha outra se já houver uma instância |
+| `LAB3D_OUTPUTS_ROOT` | `<repo>/outputs` | Execuções, uploads e registro local |
 | `LAB3D_MAX_CONCURRENT` | `1` | Execuções simultâneas |
 
-## 7. Alternativa: WSL
+Para usar outra porta nesta sessão:
 
-O WSL está presente, mas a única distribuição instalada é `docker-desktop`
-(parada), que não serve para rodar o instalador upstream. Seria necessário
-instalar uma distribuição real (`wsl --install -d Ubuntu`) e então
-`bash scripts/install-deps.sh`. O caminho nativo do Windows descrito acima foi o
-verificado e é o recomendado.
+```powershell
+$env:LAB3D_PORT = '8771'
+bun run lab3d/server.ts
+```
 
-## 8. O que falta hoje
+## Habilitar um ensaio com modelo
 
-| Etapa | Estado |
-|-------|--------|
-| Importar personagem do gerador 2D | funciona |
-| Ficha, tradução dos IDs e briefing | funciona |
-| Registro imutável e reaproveitamento | funciona |
-| Visualizar malha de execução existente | funciona |
-| Recompilar parâmetros com OpenSCAD | funciona |
-| Gerar modelo novo | **bloqueado**: falta credencial de LLM |
+Planejamento das peças, autoria OpenSCAD e crítica/refino visual precisam de um endpoint multimodal compatível com a rota selecionada. A PNG importada evita gerar uma nova referência por API. As strings do catálogo upstream são configurações do código; sua disponibilidade atual não foi verificada.
+
+Após definir provedor, modelo e orçamento autorizado, copie `.env.example` para `.env` **somente se `.env` ainda não existir** e configure no backend a chave correspondente. Não sobrescreva configuração existente, não coloque chaves no navegador e não envie `.env` ao Git.
+
+A seleção respeita `provider:model`, depois o catálogo de `src/config/models.ts`, e finalmente `PROCEDURA_PROVIDER` para um nome desconhecido. Ter somente `GEMINI_API_KEY` não configura o modelo OpenAI padrão. O `doctor` mostra o transporte efetivamente selecionado e remove credenciais/query/fragmento do endpoint exibido.
+
+Importação, briefing, consulta de resultados, renderização local e recompilação da geometria existente não dependem dessa autorização de gasto. A fidelidade da personagem humana e a comparação com um objeto gerado pelo modelo ainda precisam do ensaio completo.
+
+## Adaptações realizadas
+
+- Scripts Blender resolvidos com `fileURLToPath`, incluindo drive Windows e nomes com espaços.
+- Descoberta de binários comum ao laboratório e núcleo, com probe de execução e timeout.
+- Blender recebe `--python-exit-code 1`; exceções Python tornam a renderização uma falha real.
+- Cancelamento/timeout encerram a árvore dos workers por `taskkill /T /F` no Windows.
+- Compilação drena stdout/stderr em paralelo, rejeita falha/timeout e remove artefatos antigos antes de executar.
+- Cache de parâmetros usa SHA-256 da fonte, caminho, binário, defines e modo preview; arquivos externos em `include/use/import/surface` desabilitam reaproveitamento. STL só entra no cache após conclusão válida.

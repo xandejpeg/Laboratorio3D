@@ -11,8 +11,11 @@
  * Only the installed `openscad` binary is needed — no pipeline/harness import.
  */
 
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { join, relative } from "node:path";
+import { stopProcessTree } from "../../src/runtime/process.ts";
+import { probeBinary } from "../../src/runtime/binaries.ts";
 
 import type { ScadParam, ParamType } from "../shared/types.ts";
 
@@ -190,31 +193,14 @@ interface Caps {
   manifold: boolean;
   enableAll: boolean;
 }
-let _caps: Caps | null = null;
+const _caps = new Map<string, Caps>();
 async function caps(bin: string): Promise<Caps> {
-  if (_caps) return _caps;
-  try {
-    const p = Bun.spawn([bin, "--help"], { stdout: "pipe", stderr: "pipe" });
-    const t = (await new Response(p.stdout).text()) + (await new Response(p.stderr).text());
-    await p.exited;
-    _caps = {
-      exportFormat: t.includes("--export-format"),
-      manifold: t.includes("--backend"),
-      enableAll: t.includes("--enable"),
-    };
-  } catch {
-    _caps = { exportFormat: false, manifold: false, enableAll: false };
-  }
-  return _caps;
-}
-
-function fnv(s: string): string {
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0).toString(36);
+  const previous = _caps.get(bin);
+  if (previous) return previous;
+  const t = probeBinary(bin, ["--help"]).output;
+  const result = { exportFormat: t.includes("--export-format"), manifold: t.includes("--backend"), enableAll: t.includes("--enable") };
+  _caps.set(bin, result);
+  return result;
 }
 
 const MAX_CONCURRENT = 3;
@@ -244,9 +230,18 @@ export async function compileCustom(opts: {
   if (!existsSync(scadAbs)) return { ok: false, error: "source SCAD not found" };
 
   const cacheDir = join(runDir, "_customize");
+  const source = readFileSync(scadAbs, "utf8");
+  // External SCAD/mesh/image dependencies are not captured by this source hash.
+  // Bypass reuse for them so a changed include/import cannot show stale geometry.
+  const selfContained = !/\b(?:include|use)\s*</.test(source) && !/\b(?:import|surface)\s*\(/.test(source);
   // Preview vs full cache as distinct files so they never collide.
-  const key = fnv(`${preview ? "p|" : ""}${relative(runDir, scadAbs)}|${[...defines].sort().join("|")}`);
+  const key = createHash("sha256").update(JSON.stringify({
+    source, file: relative(runDir, scadAbs), dependencyNonce: selfContained ? null : randomUUID(),
+    openscad, preview, defines, previewDefines: preview ? PREVIEW_DEFINES : [],
+  })).digest("hex");
   const stlAbs = join(cacheDir, `${key}.stl`);
+  // Publish only complete output. Simultaneous requests cannot read a partial STL.
+  const temporaryStl = join(cacheDir, `${key}-${randomUUID()}.stl`);
   const stlRel = relative(root, stlAbs).split("\\").join("/");
 
   if (existsSync(stlAbs) && statSync(stlAbs).size > 0) {
@@ -261,7 +256,7 @@ export async function compileCustom(opts: {
   try {
     mkdirSync(cacheDir, { recursive: true });
     const c = await caps(openscad);
-    const args = [scadAbs, "-o", stlAbs];
+    const args = [scadAbs, "-o", temporaryStl];
     if (c.exportFormat) args.push("--export-format", "binstl");
     if (c.manifold) args.push("--backend", "Manifold");
     if (c.enableAll) args.push("--enable", "all");
@@ -274,21 +269,25 @@ export async function compileCustom(opts: {
     for (const d of defines) args.push("-D", d);
 
     const proc = Bun.spawn([openscad, ...args], { stdout: "pipe", stderr: "pipe" });
-    const timer = setTimeout(() => proc.kill(9), opts.timeoutMs ?? 60_000);
-    const stderr = await new Response(proc.stderr).text();
-    const code = await proc.exited;
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; stopProcessTree(proc.pid); }, opts.timeoutMs ?? 60_000);
+    const [stderr, , code] = await Promise.all([
+      new Response(proc.stderr).text(), new Response(proc.stdout).text(), proc.exited,
+    ]);
     clearTimeout(timer);
 
-    if (code !== 0 || !existsSync(stlAbs) || statSync(stlAbs).size === 0) {
+    if (timedOut || code !== 0 || !existsSync(temporaryStl) || statSync(temporaryStl).size === 0) {
       return {
         ok: false,
-        error: (stderr.trim().split("\n").slice(-6).join("\n") || `openscad exited ${code}`).slice(0, 1200),
+        error: timedOut ? "OpenSCAD recompilation timed out" : (stderr.trim().split("\n").slice(-6).join("\n") || `openscad exited ${code}`).slice(0, 1200),
       };
     }
+    renameSync(temporaryStl, stlAbs);
     return { ok: true, stl: stlRel, durationMs: Date.now() - t0, cached: false, preview };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   } finally {
+    rmSync(temporaryStl, { force: true });
     active--;
   }
 }

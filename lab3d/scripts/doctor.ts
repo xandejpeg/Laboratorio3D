@@ -37,6 +37,7 @@ if (runtime.blender.version) line("  versão", runtime.blender.version);
 
 console.log("\nModelo de linguagem\n");
 line("configurado", ok(runtime.llm.configured));
+line("transporte", runtime.llm.provider);
 line("base url", runtime.llm.baseUrl);
 line("modelo", runtime.llm.model);
 
@@ -46,6 +47,7 @@ line("importar 2D", ok(cap.import));
 line("gerar briefing", ok(cap.brief));
 line("gerar modelo 3D", ok(cap.generate));
 line("recompilar params", ok(cap.recompileParams));
+line("renderizar local", ok(cap.render));
 line("crítica visual", ok(cap.visualCritique));
 
 const notes = [...runtime.openscad.notes, ...runtime.blender.notes, ...runtime.llm.notes];

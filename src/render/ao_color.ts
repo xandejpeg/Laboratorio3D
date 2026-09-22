@@ -21,6 +21,7 @@
 
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { stopProcessTree } from "../runtime/process.ts";
 
 import { AO_RENDER_SCRIPT, BLENDER_BIN } from "./ao.ts";
 import type { RenderedView } from "./ao.ts";
@@ -82,6 +83,7 @@ export async function renderAOColorViews(
 
   const args = [
     "--background",
+    "--python-exit-code", "1",
     "--python", AO_RENDER_SCRIPT, "--",
     "--out", outDir,
     "--out-prefix", "aoc",
@@ -98,7 +100,7 @@ export async function renderAOColorViews(
   if (gpu) args.push("--gpu");
 
   const proc = Bun.spawn([BLENDER_BIN, ...args], { stdout: "pipe", stderr: "pipe" });
-  const killer = setTimeout(() => proc.kill(), timeoutMs);
+  const killer = setTimeout(() => stopProcessTree(proc.pid), timeoutMs);
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

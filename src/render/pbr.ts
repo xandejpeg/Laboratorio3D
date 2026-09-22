@@ -13,13 +13,15 @@
 
 import { existsSync, mkdirSync, writeFileSync, statSync, readdirSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { stopProcessTree } from "../runtime/process.ts";
 
 import { BLENDER_BIN } from "./ao.ts";
 import type { RenderedView } from "./ao.ts";
 import { DEFAULT_VIEWS, type ViewName } from "./views.ts";
 import { deviceLine } from "./device_line.ts";
 
-const SRC_RENDER_DIR = resolve(dirname(new URL(import.meta.url).pathname));
+const SRC_RENDER_DIR = dirname(fileURLToPath(import.meta.url));
 const PROCEDURA_ROOT = resolve(SRC_RENDER_DIR, "..", "..");
 export const PBR_RENDER_SCRIPT = join(PROCEDURA_ROOT, "scripts", "_render_pbr_blender.py");
 
@@ -121,7 +123,7 @@ export async function renderPbrViews(opts: RenderPbrOpts): Promise<RenderPbrResu
 
   const hdri = opts.hdri ?? findStudioHdri();
   const args = [
-    "--background", "--python", PBR_RENDER_SCRIPT, "--",
+    "--background", "--python-exit-code", "1", "--python", PBR_RENDER_SCRIPT, "--",
     "--spec", specPath, "--out", outDir, "--out-prefix", prefix,
     "--views", views.join(","),
     "--samples", String(opts.samples ?? 350),
@@ -140,7 +142,7 @@ export async function renderPbrViews(opts: RenderPbrOpts): Promise<RenderPbrResu
   log(`[pbr] ${opts.parts.length} parts, ${views.length} views${hdri ? " (studio HDRI)" : " (procedural env)"}`);
 
   const proc = Bun.spawn([BLENDER_BIN, ...args], { stdout: "pipe", stderr: "pipe" });
-  const killer = setTimeout(() => proc.kill(), timeoutMs);
+  const killer = setTimeout(() => stopProcessTree(proc.pid), timeoutMs);
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
