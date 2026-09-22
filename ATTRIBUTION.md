@@ -16,15 +16,29 @@ commits nossos, por cima dele.
 
 ## Como o laboratório convive com o upstream
 
-- **Nenhum arquivo upstream foi modificado.** Todo o código do laboratório está
-  em [lab3d/](lab3d/README.md).
+- Todo o código **novo** do laboratório está em [lab3d/](lab3d/README.md).
 - O servidor do laboratório **importa e reutiliza** os módulos upstream
   (`web/server/jobs.ts`, `web/server/scan.ts`, `web/server/customize.ts`,
   `web/server/safe.ts`, `web/server/env.ts`) em vez de copiá-los ou
   reimplementá-los. Toda geração é um subprocesso real
   `bun run scripts/procedura.ts`.
 - Consequência prática: `git fetch upstream && git merge upstream/main` continua
-  trivial, porque não há sobreposição de arquivos.
+  simples, porque quase não há sobreposição de arquivos.
+
+### Correções aplicadas em arquivos do upstream
+
+Estas são as **únicas** alterações fora de `lab3d/`. São correções de
+portabilidade, não mudanças de comportamento, e valem para envio ao upstream.
+
+| Arquivos | Correção |
+|---|---|
+| `src/render/{ao,parts_color,pbr}.ts`, `src/pipeline/{draft,draft-incremental,motion,paint,refine,refine-direct}.ts`, `src/tools/diagnose.ts` | Trocar `new URL(import.meta.url).pathname` por `fileURLToPath(...)` |
+
+**Por quê:** no Windows, `URL.pathname` devolve `/C:/Users/...`, e `resolve()`
+transforma isso em `C:\C:\Users\...`. O efeito era que **nenhum** script de
+render do Blender e **nenhum** arquivo de prompt era encontrado — o pipeline
+quebraria no meio de uma execução já cobrada. Em Linux o comportamento é
+idêntico ao anterior.
 
 ## Diferenças deliberadas em relação ao Studio upstream
 

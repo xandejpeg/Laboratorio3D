@@ -16,6 +16,7 @@
 
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { DEFAULT_VIEWS, type ViewName } from "./views.ts";
 import { addStage } from "../pipeline/stage-timer.ts";
@@ -27,8 +28,9 @@ export { DEFAULT_VIEWS };
 export type AOView = ViewName;
 
 // scripts/_render_ao_blender.py is a sibling asset of this TS module's dir.
-// dirname(import.meta.url) → .../Procedura/src/render
-const SRC_RENDER_DIR = resolve(dirname(new URL(import.meta.url).pathname));
+// fileURLToPath, not URL.pathname: on Windows the latter yields "/C:/...",
+// which resolve() turns into "C:\C:\...".
+const SRC_RENDER_DIR = resolve(dirname(fileURLToPath(import.meta.url)));
 const PROCEDURA_ROOT = resolve(SRC_RENDER_DIR, "..", "..");
 export const AO_RENDER_SCRIPT = join(PROCEDURA_ROOT, "scripts", "_render_ao_blender.py");
 
@@ -93,7 +95,8 @@ export async function renderAOViews(opts: RenderAOOpts): Promise<RenderAOResult>
   const edgeThickness = opts.edgeThickness ?? 1.2;
   const views = opts.views ?? DEFAULT_VIEWS;
   const timeoutMs = opts.timeoutMs ?? (Number(process.env.PROCEDURA_RENDER_TIMEOUT_MS) || 600_000);
-  const gpu = opts.gpu ?? true;
+  // PROCEDURA_RENDER_GPU=0 forces CPU: some OptiX setups hang in --background.
+  const gpu = opts.gpu ?? process.env["PROCEDURA_RENDER_GPU"] !== "0";
   const zUp = opts.zUp ?? true;
   const decimateAbove = opts.decimateAbove ?? 0;
 

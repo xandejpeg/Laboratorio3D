@@ -58,7 +58,7 @@ export async function renderAOColorViews(
   const bg = opts.bg ?? 0.9;
   const edgeThickness = opts.edgeThickness ?? 1.2;
   const palette = opts.palette ?? DEFAULT_PALETTE;
-  const gpu = opts.gpu ?? true;
+  const gpu = opts.gpu ?? process.env["PROCEDURA_RENDER_GPU"] !== "0";
   const views = opts.views ?? DEFAULT_VIEWS;
   const timeoutMs = opts.timeoutMs ?? 900_000;
 

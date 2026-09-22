@@ -86,6 +86,29 @@ Para fixar outra instalação:
 PROCEDURA_BLENDER_PATH=C:\Program Files\Blender Foundation\Blender 4.2\blender.exe
 ```
 
+### Render na GPU trava nesta máquina
+
+Medido com a mesma peça, uma vista, 256 px, 8 amostras:
+
+| Dispositivo | Resultado |
+|---|---|
+| CPU | **9 s**, PNGs escritos |
+| GPU (OPTIX, RTX 3050) | **sem saída após 4 min**, morto por timeout |
+
+O Cycles seleciona OPTIX e anuncia o dispositivo, mas trava em `--background`
+antes de produzir qualquer amostra. Como o padrão do pipeline é GPU ligada,
+cada render de cada passo de refino morreria no timeout de 600 s e a execução
+inteira seria perdida.
+
+Fixe a CPU no `.env` da raiz:
+
+```
+PROCEDURA_RENDER_GPU=0
+```
+
+Se sua máquina renderizar bem na GPU, não defina a variável — o padrão continua
+sendo GPU. O `doctor` avisa quando a CPU está fixada.
+
 ## 4. Modelo de linguagem — necessário para gerar (NÃO CONFIGURADO)
 
 Planejamento, geração das peças e refino são chamadas a um modelo. Sem

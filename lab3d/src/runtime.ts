@@ -123,6 +123,9 @@ export function probeBlender(): BinaryProbe {
     return { name: "Blender", path: null, version: null, envVar: "PROCEDURA_BLENDER_PATH", notes };
   }
   const version = run(path, ["--version"]).out.trim().split(/\r?\n/)[0] ?? null;
+  if (process.env["PROCEDURA_RENDER_GPU"] === "0") {
+    notes.push("Rendering is pinned to the CPU (PROCEDURA_RENDER_GPU=0). Slower, but it does not hang.");
+  }
   return { name: "Blender", path, version, envVar: "PROCEDURA_BLENDER_PATH", notes };
 }
 

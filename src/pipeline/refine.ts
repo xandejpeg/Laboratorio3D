@@ -14,6 +14,7 @@
 
 import { readFileSync, mkdirSync, writeFileSync, appendFileSync, existsSync, readdirSync, rmSync, renameSync, copyFileSync } from "node:fs";
 import { join, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createHarness, applyAutoCache, createLLMClient } from "@harness/template";
 import type { ModelRef } from "@harness/template/types";
@@ -56,7 +57,7 @@ import { loadSTL } from "../mesh/stl.ts";
 import { analyzeConnectivity, summarizeConnectivity } from "../mesh/connectivity.ts";
 import { renderAOViews } from "../render/ao.ts";
 
-const REFINE_PROMPT_PATH = new URL("./refine-prompt.md", import.meta.url).pathname;
+const REFINE_PROMPT_PATH = fileURLToPath(new URL("./refine-prompt.md", import.meta.url));
 
 export interface RefineOpts {
   outputDir: string;

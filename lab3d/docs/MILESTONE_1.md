@@ -15,9 +15,11 @@ pôde ser executado. Nenhuma etapa abaixo é simulada.
   (é o próprio topo de `upstream/main`; o histórico público do Procedura é um
   único commit inicial).
 - A licença MIT do upstream permanece em `LICENSE`, sem alteração.
-- **Nenhum arquivo upstream foi modificado.** Todo o código do laboratório vive
-  em `lab3d/`. Isso mantém `git merge upstream/main` limpo e deixa claro, por
-  caminho de arquivo, o que é deles e o que é nosso.
+- Todo o código **novo** vive em `lab3d/`. Fora dele, a única mudança é uma
+  correção de portabilidade no Windows (`fileURLToPath`), descrita em
+  [ATTRIBUTION.md](../../ATTRIBUTION.md) e detalhada na seção 2. Isso mantém
+  `git merge upstream/main` simples e deixa claro, por caminho de arquivo, o
+  que é deles e o que é nosso.
 - O laboratório **importa e reutiliza** `web/server/jobs.ts`, `scan.ts`,
   `customize.ts`, `safe.ts` e `env.ts` — não os copia nem os substitui. Toda
   geração é um subprocesso real `bun run scripts/procedura.ts`.
@@ -49,6 +51,34 @@ de ponta a ponta sobre um SCAD paramétrico (flange com furos):
 | `GET /api/params` | Os 6 parâmetros do SCAD, `customizeAvailable: true` |
 | `POST /api/customize` com parâmetro inexistente | `422` — só recompila o que o SCAD declara |
 | `POST /api/customize` pela interface (`bolt_count` 4 → 8) | `200` em **0,3 s**, malha passa de 1.084 para **1.356 triângulos** |
+
+### Render no Blender
+
+A etapa de render é independente do modelo de linguagem, então pôde ser provada
+agora — sobre a malha que o OpenSCAD produziu, pelo ponto de entrada real do
+pipeline (`renderAOViews`):
+
+| Verificação | Resultado observado |
+|---|---|
+| Render AO + arestas Freestyle, 2 vistas, 384 px | **9,3 s**, `ao-front.png` 64 kB e `ao-isometric.png` 115 kB |
+| Conteúdo das imagens | A peça compilada, sombreada e com arestas — é o que o crítico visual recebe |
+
+Dois defeitos reais foram encontrados e corrigidos neste caminho; ambos só
+apareceriam no meio de uma execução já cobrada.
+
+**1. Caminhos de arquivo quebrados no Windows.** Dez módulos do upstream
+resolviam caminhos com `new URL(import.meta.url).pathname`, que no Windows
+devolve `/C:/Users/...`; `resolve()` transformava isso em `C:\C:\Users\...`.
+Consequência: **nenhum** script de render do Blender e **nenhum** arquivo de
+prompt era encontrado. Corrigido com `fileURLToPath`, que é equivalente em
+Linux. Detalhes em [ATTRIBUTION.md](../../ATTRIBUTION.md).
+
+**2. Render na GPU trava.** Com o padrão do pipeline (GPU ligada), o Cycles
+escolhe OPTIX, anuncia o dispositivo e **trava sem produzir amostra alguma**:
+mais de 4 minutos contra 9 segundos na CPU, para a mesma peça a 256 px. Cada
+render de cada passo de refino morreria no timeout. Foi adicionado o
+interruptor `PROCEDURA_RENDER_GPU=0`, que mantém o padrão anterior para quem
+tem GPU funcional e é reportado pelo `doctor`.
 
 ### Interface em navegador real
 
@@ -88,9 +118,15 @@ nenhum export real e nenhuma credencial entram no repositório.
   histórico de execuções e editor dos parâmetros que o Procedura de fato expõe.
 - **Compilação e recompilação** de geometria com OpenSCAD/Manifold, medida em
   frações de segundo, com a malha recarregada no visualizador.
+- **Render no Blender** das vistas AO com arestas, que é a imagem consumida pela
+  crítica visual.
 - **Sondagem de ambiente** para Windows, que alimenta `OPENSCAD_PATH` e
   `PROCEDURA_BLENDER_PATH` no processo filho — o upstream só procura em
   `$HOME/opt`, `/usr/local/bin` e `/opt`.
+
+Em outras palavras, a cadeia **SCAD → compilação → malha → render → imagem para
+crítica** está provada nesta máquina. O que falta é exclusivamente a parte que
+chama o modelo: planejamento, geração das peças e refino.
 
 ## 4. O que está bloqueado, e por quê
 

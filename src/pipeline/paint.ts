@@ -24,6 +24,7 @@
 
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve, dirname, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createHarness, applyAutoCache, createLLMClient } from "@harness/template";
 import { addStage, timeStage } from "./stage-timer.ts";
@@ -65,7 +66,7 @@ import { writePaintedOBJ, type PaintedPart } from "../mesh/obj-mtl.ts";
 import { createNoopSandbox } from "../sandbox/noop.ts";
 import { createFileTrajectoryWriter } from "../trajectory/writer.ts";
 
-const PROCEDURA_ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..", "..");
+const PROCEDURA_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 /** Each paint prompt can be pointed elsewhere by env var, so prompt variants can
  *  be A/B'd against a real run without editing the shipped file. */
 function promptPath(file: string, envVar: string): string {

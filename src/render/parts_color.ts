@@ -14,6 +14,7 @@
 
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { BLENDER_BIN } from "./ao.ts";
 import type { RenderedView } from "./ao.ts";
@@ -25,7 +26,7 @@ import { deviceLine } from "./device_line.ts";
 // Re-exported for back-compat with existing importers.
 export { DEFAULT_PALETTE };
 
-const SRC_RENDER_DIR = resolve(dirname(new URL(import.meta.url).pathname));
+const SRC_RENDER_DIR = resolve(dirname(fileURLToPath(import.meta.url)));
 const PROCEDURA_ROOT = resolve(SRC_RENDER_DIR, "..", "..");
 export const PARTS_COLOR_RENDER_SCRIPT = join(
   PROCEDURA_ROOT, "scripts", "_render_parts_color_blender.py",
@@ -81,7 +82,7 @@ export async function renderPartsColorViews(
   const size = opts.size ?? 640;
   const samples = opts.samples ?? 64;
   const palette = opts.palette ?? DEFAULT_PALETTE;
-  const gpu = opts.gpu ?? true;
+  const gpu = opts.gpu ?? process.env["PROCEDURA_RENDER_GPU"] !== "0";
   const edges = opts.edges ?? false;
   const engine = opts.engine
     ?? (process.env["PROCEDURA_RENDER_ENGINE"] === "eevee" ? "eevee" : "cycles");

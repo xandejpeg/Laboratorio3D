@@ -13,13 +13,14 @@
 
 import { existsSync, mkdirSync, writeFileSync, statSync, readdirSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { BLENDER_BIN } from "./ao.ts";
 import type { RenderedView } from "./ao.ts";
 import { DEFAULT_VIEWS, type ViewName } from "./views.ts";
 import { deviceLine } from "./device_line.ts";
 
-const SRC_RENDER_DIR = resolve(dirname(new URL(import.meta.url).pathname));
+const SRC_RENDER_DIR = resolve(dirname(fileURLToPath(import.meta.url)));
 const PROCEDURA_ROOT = resolve(SRC_RENDER_DIR, "..", "..");
 export const PBR_RENDER_SCRIPT = join(PROCEDURA_ROOT, "scripts", "_render_pbr_blender.py");
 
@@ -136,7 +137,7 @@ export async function renderPbrViews(opts: RenderPbrOpts): Promise<RenderPbrResu
   if (opts.edgeBevel !== undefined) args.push("--edge-bevel", String(opts.edgeBevel));
   if (opts.keyHard !== undefined) args.push("--key-hard", String(opts.keyHard));
   if (hdri) args.push("--hdri", hdri);
-  if (opts.gpu ?? true) args.push("--gpu");
+  if (opts.gpu ?? process.env["PROCEDURA_RENDER_GPU"] !== "0") args.push("--gpu");
   log(`[pbr] ${opts.parts.length} parts, ${views.length} views${hdri ? " (studio HDRI)" : " (procedural env)"}`);
 
   const proc = Bun.spawn([BLENDER_BIN, ...args], { stdout: "pipe", stderr: "pipe" });
