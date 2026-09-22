@@ -9,6 +9,7 @@
 
 import { createViewer, type ViewerHandle } from "./viewer.ts";
 import { createBridgeReceiver } from "./bridge.ts";
+import { displayArtifact, linkedResults } from "./results.ts";
 import type { RunDetail as StudioRunDetail, ViewImage } from "../../web/shared/types.ts";
 
 // ── shapes returned by /api/lab/* and the reused Studio routes ──────────────
@@ -100,10 +101,10 @@ interface RunSummary {
 interface RunEvidence {
   purpose: string;
   completion?: { ok: boolean } | null;
-  quality: { approval: string; verdict: string | null; stage: "draft"; finalSummary: string | null; omittedParts: string[]; floaterParts: string[]; errors: string[] };
+  quality: { approval: string; verdict: string | null; stage: "draft" | "authored-result"; finalSummary: string | null; omittedParts: string[]; floaterParts: string[]; errors: string[] };
   elapsedMs: number | null;
   usage: { inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
-  configuration: { options?: { mode?: string }; [key: string]: unknown } | null;
+  configuration: { backend?: string; capabilities?: { recompileParams?: boolean }; options?: { mode?: string }; [key: string]: unknown } | null;
   artifacts: { path: string; sha256: string; bytes: number }[];
 }
 
@@ -204,8 +205,11 @@ const statusLabel = (status: string): string => ({
 }[status] ?? status);
 
 const isLocalCompilation = (purpose?: string): boolean => purpose === "offline-compile" || purpose === "recompile";
+const isBlenderAuthored = (purpose?: string, configuration?: RunEvidence["configuration"]): boolean =>
+  purpose === "blender-authored" || configuration?.backend === "blender" || configuration?.options?.mode === "blender-authored-local";
 
 function executionState(status: string, purpose?: string, completion?: { ok: boolean } | null): string {
+  if (isBlenderAuthored(purpose)) return `Resultado Blender · ${completion?.ok === true ? "registrado" : completion?.ok === false ? "registro falhou" : "sem conclusão de registro"}`;
   if (!isLocalCompilation(purpose)) return statusLabel(status);
   const operation = purpose === "recompile" ? "Recompilação local" : "Compilação local";
   return `${operation} · ${completion?.ok === true ? "concluída" : completion?.ok === false ? "falhou" : "sem conclusão registrada"}`;
@@ -233,7 +237,7 @@ function resetResult(message = "Nenhuma malha carregada para este personagem."):
   $("#file-list").replaceChildren();
   $("#render-list").replaceChildren();
   $("#params").replaceChildren();
-  for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-view]")) button.disabled = true;
+  for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-view], button[data-material]")) button.disabled = true;
 }
 
 function updateGenerationAvailability(): void {
@@ -588,11 +592,11 @@ function renderRuns(runs: CharacterRun[]): void {
       const open = el("button", { textContent: "Abrir resultado", className: "ghost" });
       open.addEventListener("click", () => void showRun(run.runId));
       const follow = el("button", { textContent: "Acompanhar", className: "ghost" });
-      follow.disabled = !run.jobId || run.purpose === "recompile";
+      follow.disabled = !run.jobId || run.purpose === "recompile" || isBlenderAuthored(run.purpose);
       follow.addEventListener("click", () => followJob(run.jobId));
       return el("li", {}, [
         el("div", { className: "row" }, [
-          el("strong", { textContent: run.options?.mode === "codex-authored-local" ? "Modelo criado por Codex" : run.purpose === "generate" ? "Geração" : "Recompilação" }),
+          el("strong", { textContent: isBlenderAuthored(run.purpose) ? "Construção no Blender" : run.options?.mode === "codex-authored-local" ? "Modelo criado por Codex" : run.purpose === "generate" ? "Geração" : "Recompilação" }),
           el("span", { className: "meta", textContent: new Date(run.createdAt).toLocaleString() }),
         ]),
         el("div", { className: "meta" }, [el("code", { textContent: run.runId })]),
@@ -672,8 +676,7 @@ async function refreshReadyRuns(openLatest = false): Promise<void> {
     /* the runs root may not exist yet */
   }
   if (request !== readyVersion || version !== selectionVersion || selected !== character) return;
-  const ownIds = new Set(character.runs.map((r) => r.runId));
-  const withMesh = runs.filter((r) => ownIds.has(r.id) && (r.hasFinalMesh || r.hasDraftMesh));
+  const withMesh = linkedResults(runs, character.runs);
   const preferredId = shownRunId ?? select.value;
   select.replaceChildren(
     ...(withMesh.length
@@ -809,14 +812,15 @@ async function showRun(runId: string): Promise<void> {
     if (!isCurrent()) return;
     const purpose = evidence?.purpose ?? binding.run?.purpose;
     const localCompilation = isLocalCompilation(purpose);
+    const blenderAuthored = isBlenderAuthored(purpose, evidence?.configuration) || binding.run?.options?.mode === "blender-authored-local";
     const codexAuthored = binding.run?.options?.["mode"] === "codex-authored-local";
     $("#result-card").hidden = false;
     if (independent) $("#character-key").textContent = detail.id;
 
     const verdict = $("#result-verdict");
-    const artifact = [detail.painted, detail.final, detail.draft].find((item) => item?.objPath || item?.stlPath);
-    const meshPath = artifact?.objPath ?? artifact?.stlPath ?? null;
-    const stage = localCompilation ? "Geometria compilada" : artifact === detail.painted ? "Pintura" : artifact === detail.final ? "Final" : "Rascunho";
+    const artifact = displayArtifact(detail, blenderAuthored);
+    const meshPath = artifact?.glbPath ?? artifact?.objPath ?? artifact?.stlPath ?? null;
+    const stage = blenderAuthored ? "Modelo Blender" : localCompilation ? "Geometria compilada" : artifact === detail.painted ? "Pintura" : artifact === detail.final ? "Final" : "Rascunho";
 
     verdict.replaceChildren(
     el("div", { className: "note info" }, [
@@ -824,7 +828,7 @@ async function showRun(runId: string): Promise<void> {
       el("div", { textContent: `Execução ${detail.id} · ${executionState(detail.status, purpose, evidence?.completion)}` }),
       el("div", { textContent: meshPath ? `${stage} · arquivo exibido: ${meshPath}` : "Esta execução ainda não produziu uma malha." }),
       el("div", {
-        textContent: codexAuthored ? "Modelo construído por Codex nesta conversa, compilado no OpenSCAD e renderizado no Blender. O gerador automático por API não foi executado." : localCompilation ? "Sem avaliação por modelo. Esta execução compilou o SCAD localmente, sem executar planejamento ou refino por IA." : detail.verdict
+        textContent: blenderAuthored ? "Modelo construído no Blender e exportado como GLB. Este resultado tem fonte Blender própria; não é uma recompilação paramétrica do SCAD anterior. Consulte a configuração registrada." : codexAuthored ? "Modelo construído por Codex nesta conversa, compilado no OpenSCAD e renderizado no Blender. O gerador automático por API não foi executado." : localCompilation ? "Sem avaliação por modelo. Esta execução compilou o SCAD localmente, sem executar planejamento ou refino por IA." : detail.verdict
           ? `Veredito do refino: ${detail.verdict}`
           : "O refino não registrou um veredito para esta execução.",
       }),
@@ -840,7 +844,11 @@ async function showRun(runId: string): Promise<void> {
     ]));
     renderFiles(detail);
     renderEvidence(evidence, isCurrent);
-    void renderParams(runId, isCurrent, artifact === detail.draft ? "draft" : "final");
+    if (blenderAuthored || evidence?.configuration?.capabilities?.recompileParams === false) {
+      $("#params").replaceChildren(el("div", { className: "note info", textContent: "Este resultado foi construído no Blender. Alterações de forma devem usar sua fonte Blender; os parâmetros SCAD não recompilam este modelo. O resultado Procedura anterior continua no histórico." }));
+    } else {
+      void renderParams(runId, isCurrent, artifact === detail.draft ? "draft" : "final");
+    }
 
     const info = $("#mesh-info");
     if (!meshPath) {
@@ -852,7 +860,7 @@ async function showRun(runId: string): Promise<void> {
       if (!isCurrent()) return;
       $("#viewer-empty").hidden = true;
       info.textContent = `${result.triangles.toLocaleString("pt-BR")} triângulos · ${stage.toLowerCase()}${result.materials ? ` · ${result.materials} materiais` : " · material neutro"}`;
-      for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-view]")) button.disabled = false;
+      for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-view], button[data-material]")) button.disabled = false;
     }
   } catch (e) {
     if (!isCurrent()) return;
@@ -870,13 +878,14 @@ function renderEvidence(data: RunEvidence | null, isCurrent: () => boolean): voi
     if (!data) throw new Error("O servidor não retornou as evidências desta execução.");
     const quality = data.quality;
     const localCompilation = isLocalCompilation(data.purpose);
+    const blenderAuthored = isBlenderAuthored(data.purpose, data.configuration);
     const codexAuthored = data.configuration?.["options"]?.["mode"] === "codex-authored-local";
-    const purpose = codexAuthored ? "Reconstrução escrita por Codex nesta conversa; OpenSCAD e Blender locais, sem API externa" : ({ generate: "Geração pelo pipeline Procedura", recompile: "Recompilação local de parâmetros, sem IA", "offline-compile": "Ensaio local: SCAD manual compilado, sem geração por IA", unlinked: "Origem não documentada" } as Record<string, string>)[data.purpose] ?? data.purpose;
+    const purpose = blenderAuthored ? "Construção local no Blender, com fonte e artefatos próprios" : codexAuthored ? "Reconstrução escrita por Codex nesta conversa; OpenSCAD e Blender locais, sem API externa" : ({ generate: "Geração pelo pipeline Procedura", recompile: "Recompilação local de parâmetros, sem IA", "offline-compile": "Ensaio local: SCAD manual compilado, sem geração por IA", unlinked: "Origem não documentada" } as Record<string, string>)[data.purpose] ?? data.purpose;
     host.replaceChildren(el("div", { className: "note warn" }, [
-      el("strong", { textContent: codexAuthored ? "Modelo local · validação visual do usuário pendente" : localCompilation ? "Sem avaliação por modelo · revisão humana pendente" : "Aprovação visual: revisão humana pendente" }),
+      el("strong", { textContent: blenderAuthored || codexAuthored ? "Modelo local · validação visual do usuário pendente" : localCompilation ? "Sem avaliação por modelo · revisão humana pendente" : "Aprovação visual: revisão humana pendente" }),
       el("div", { textContent: `Processo: ${purpose}.` }),
       el("div", { textContent: `Tempo registrado: ${data.elapsedMs === null ? "não disponível" : `${(data.elapsedMs / 1000).toFixed(1)} s`}. Tokens: entrada ${data.usage.inputTokens ?? "não disponível"}, saída ${data.usage.outputTokens ?? "não disponível"}. Custo: ${data.usage.costUsd === null ? "não informado pelo provedor" : `US$ ${data.usage.costUsd}`}.` }),
-      ...(!localCompilation ? [
+      ...(!localCompilation && !blenderAuthored ? [
         el("div", { textContent: `No rascunho — peças omitidas: ${quality.omittedParts.join(", ") || "nenhuma registrada"}; peças soltas: ${quality.floaterParts.join(", ") || "nenhuma registrada"}.` }),
         el("div", { textContent: "Esses registros são da montagem inicial. O refino pode alterar as peças e a conectividade; eles não validam a malha final." }),
       ] : []),
@@ -884,7 +893,7 @@ function renderEvidence(data: RunEvidence | null, isCurrent: () => boolean): voi
     ]), ...(quality.finalSummary ? [el("details", {}, [
       el("summary", { textContent: "Evidência final registrada pelo pipeline" }),
       el("pre", { className: "pre", textContent: quality.finalSummary }),
-    ])] : localCompilation ? [] : [el("div", { className: "note info", textContent: "Nenhum resumo final registrado. A conectividade final não foi confirmada por estas evidências." })]), el("details", {}, [
+    ])] : localCompilation || blenderAuthored ? [] : [el("div", { className: "note info", textContent: "Nenhum resumo final registrado. A conectividade final não foi confirmada por estas evidências." })]), el("details", {}, [
       el("summary", { textContent: "Configuração e hashes dos artefatos" }),
       el("pre", { className: "pre", textContent: JSON.stringify({ configuration: data.configuration, completion: data.completion, artifacts: data.artifacts }, null, 2) }),
     ]));
@@ -945,7 +954,7 @@ function renderFiles(detail: RunDetail): void {
 
 async function renderParams(runId: string, isCurrent: () => boolean, which: "draft" | "final"): Promise<void> {
   const host = $("#params");
-  let data: { params: ScadParam[]; customizeAvailable: boolean };
+  let data: { params: ScadParam[]; customizeAvailable: boolean; reason?: string };
   try {
     data = await api(`/api/params?id=${encodeURIComponent(runId)}&which=${which}`);
   } catch (e) {
@@ -958,8 +967,7 @@ async function renderParams(runId: string, isCurrent: () => boolean, which: "dra
     host.replaceChildren(
       el("div", {
         className: "note info",
-        textContent:
-          "Nenhum parâmetro de topo foi exposto por este arquivo SCAD. O customizador só reconhece variáveis simples no nível superior; expressões não viram controles.",
+        textContent: data.reason ?? "Nenhum parâmetro de topo foi exposto por este arquivo SCAD. O customizador só reconhece variáveis simples no nível superior; expressões não viram controles.",
       }),
     );
     return;
@@ -1101,6 +1109,17 @@ for (const button of document.querySelectorAll<HTMLButtonElement>(".views button
   });
 }
 
+for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-material]")) {
+  button.addEventListener("click", () => {
+    const mode = button.dataset["material"];
+    if (!viewer || (mode !== "colors" && mode !== "gray")) return;
+    viewer.setMaterialMode(mode);
+    for (const choice of document.querySelectorAll<HTMLButtonElement>("button[data-material]")) {
+      choice.setAttribute("aria-pressed", String(choice === button));
+    }
+  });
+}
+
 wireImport();
 wireGenerate();
 $("#refresh-independent").addEventListener("click", () => void refreshIndependentRuns());
@@ -1111,7 +1130,9 @@ void wire2DBridge();
 void refreshIndependentRuns();
 void refreshCharacters().then(async () => {
   const key = new URLSearchParams(location.search).get("character");
-  if (key && /^[a-f0-9]{64}$/.test(key) && !selected) await selectCharacter(key);
+  // A slow boot request must not replace a user's newer selection or an import
+  // already started through the 2D bridge (both advance selectionVersion).
+  if (key && /^[a-f0-9]{64}$/.test(key) && selectionVersion === 0) await selectCharacter(key);
 }).catch((error: Error) => {
   $("#character-list").replaceChildren(el("li", { textContent: `Não foi possível listar personagens: ${error.message}` }));
 });

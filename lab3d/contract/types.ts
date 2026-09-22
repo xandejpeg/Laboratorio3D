@@ -176,7 +176,7 @@ export interface CharacterRecord {
   contentDigest: string;
 }
 
-export type RunPurpose = "generate" | "recompile";
+export type RunPurpose = "generate" | "recompile" | "blender-authored";
 
 /** Links a character record to one pipeline execution. */
 export interface CharacterRun {

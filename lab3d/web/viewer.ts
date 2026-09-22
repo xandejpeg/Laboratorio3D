@@ -1,7 +1,7 @@
 /**
  * Mesh viewer for the geometry the pipeline actually produced.
  *
- * It loads the run's own OBJ/STL from /api/file. There is no stand-in model and
+ * It loads the run's own GLB/OBJ/STL from /api/file. There is no stand-in model and
  * no procedural placeholder: if the pipeline produced nothing, the viewer shows
  * nothing and says so.
  */
@@ -10,11 +10,46 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { validateEmbeddedGlb } from "./glb.ts";
+
+export type MaterialMode = "colors" | "gray";
+
+/** Keep the original material objects intact, including every GLB texture slot. */
+export function createMaterialInspection() {
+  const originals = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+  const gray = new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.8, metalness: 0, side: THREE.DoubleSide });
+  let mode: MaterialMode = "colors";
+  const setMode = (next: MaterialMode): void => {
+    mode = next;
+    for (const [mesh, material] of originals) mesh.material = mode === "gray" ? gray : material;
+  };
+  const clear = (): void => {
+    // Restore before the viewer disposes a run, so its original textures and
+    // materials remain reachable by the normal resource cleanup.
+    for (const [mesh, material] of originals) mesh.material = material;
+    originals.clear();
+  };
+  return {
+    setMode,
+    clear,
+    attach(root: THREE.Object3D): void {
+      clear();
+      root.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (mesh.isMesh) originals.set(mesh, mesh.material);
+      });
+      setMode(mode);
+    },
+    dispose(): void { clear(); gray.dispose(); },
+  };
+}
 
 export interface ViewerHandle {
   load(url: string, mtlUrl?: string | null): Promise<{ triangles: number; size: THREE.Vector3; materials: number }>;
   clear(): void;
   setView(view: "front" | "left" | "right" | "back" | "top"): void;
+  setMaterialMode(mode: MaterialMode): void;
   dispose(): void;
 }
 
@@ -26,6 +61,8 @@ export function createViewer(host: HTMLElement): ViewerHandle {
   camera.position.set(0, 0.4, 4);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1;
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   host.appendChild(renderer.domElement);
 
@@ -46,12 +83,14 @@ export function createViewer(host: HTMLElement): ViewerHandle {
   scene.add(grid);
 
   let current: THREE.Object3D | null = null;
+  let additionalScenes: THREE.Object3D[] = [];
   let radius = 2;
   let loadVersion = 0;
   let pending: AbortController | null = null;
   let modelSize = new THREE.Vector3(1, 2, 1);
 
   const material = new THREE.MeshStandardMaterial({ color: 0xb9c2cf, roughness: 0.72, metalness: 0.05 });
+  const inspection = createMaterialInspection();
 
   function resize(): void {
     const w = host.clientWidth || 1;
@@ -75,14 +114,31 @@ export function createViewer(host: HTMLElement): ViewerHandle {
   }
   tick();
 
-  function disposeObject(obj: THREE.Object3D): void {
+  function disposeObject(obj: THREE.Object3D, extra: THREE.Object3D[] = []): void {
     const disposed = new Set<THREE.Material>();
-    obj.traverse((child) => {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const textures = new Set<THREE.Texture>();
+    const bitmaps = new Set<ImageBitmap>();
+    for (const root of new Set([obj, ...extra])) root.traverse((child) => {
       const mesh = child as THREE.Mesh;
-      if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.geometry && !geometries.has(mesh.geometry)) { mesh.geometry.dispose(); geometries.add(mesh.geometry); }
       if (mesh.material) for (const mat of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-        if (mat !== material && !disposed.has(mat)) { mat.dispose(); disposed.add(mat); }
+        if (mat === material || disposed.has(mat)) continue;
+        // GLTFLoader creates PBR texture slots (base color, normal, roughness,
+        // metallic, emissive, AO and supported extension maps) on the material.
+        for (const value of Object.values(mat)) {
+          if (!(value instanceof THREE.Texture) || textures.has(value)) continue;
+          textures.add(value);
+          const image: unknown = value.source?.data;
+          if (typeof ImageBitmap !== "undefined" && image instanceof ImageBitmap && !bitmaps.has(image)) {
+            bitmaps.add(image);
+            image.close();
+          }
+          value.dispose();
+        }
+        mat.dispose(); disposed.add(mat);
       }
+      if ((child as THREE.SkinnedMesh).isSkinnedMesh) (child as THREE.SkinnedMesh).skeleton?.dispose();
     });
   }
 
@@ -90,16 +146,18 @@ export function createViewer(host: HTMLElement): ViewerHandle {
     loadVersion++;
     pending?.abort();
     pending = null;
+    inspection.clear();
     if (!current) return;
     scene.remove(current);
-    disposeObject(current);
+    disposeObject(current, additionalScenes);
     current = null;
+    additionalScenes = [];
   }
 
   /** Centre on the origin and scale so the longest axis spans 2 units. */
-  function frame(object: THREE.Object3D): { triangles: number; size: THREE.Vector3; materials: number } {
-    // OpenSCAD and the upstream Blender exports use Z-up, as in Studio.
-    object.rotateX(-Math.PI / 2);
+  function frame(object: THREE.Object3D, zUp = true): { triangles: number; size: THREE.Vector3; materials: number } {
+    // OBJ/STL from OpenSCAD are Z-up; glTF already supplies Y-up coordinates.
+    if (zUp) object.rotateX(-Math.PI / 2);
     object.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(object);
     const size = box.getSize(new THREE.Vector3());
@@ -118,6 +176,7 @@ export function createViewer(host: HTMLElement): ViewerHandle {
     const materials = new Set<THREE.Material>();
     object.traverse((child) => {
       const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh) return;
       const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
       if (!geometry) return;
       for (const mat of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
@@ -130,6 +189,7 @@ export function createViewer(host: HTMLElement): ViewerHandle {
     grid.position.y = -modelSize.y / 2 - 0.025;
     resize();
     setView("front");
+    inspection.attach(object);
     return { triangles: Math.round(triangles), size, materials: materials.size };
   }
 
@@ -160,6 +220,29 @@ export function createViewer(host: HTMLElement): ViewerHandle {
     };
     assertCurrent();
     const meshPath = new URL(url, window.location.href).searchParams.get("path") ?? url;
+    if (/\.glb$/i.test(meshPath)) {
+      validateEmbeddedGlb(buffer);
+      const manager = new THREE.LoadingManager();
+      manager.setURLModifier((resource) => {
+        // Blob URLs here are made by GLTFLoader from embedded bufferViews;
+        // validateEmbeddedGlb rejects blob URLs supplied by the file itself.
+        if (resource.startsWith("blob:") || resource.startsWith("data:")) return resource;
+        throw new Error("O GLB tentou carregar um recurso externo.");
+      });
+      const gltf = await new GLTFLoader(manager).parseAsync(buffer, "");
+      const object = gltf.scene;
+      try {
+        assertCurrent();
+        // Keep the loader's PBR materials, color spaces, UVs and object
+        // transforms. An exported rig is displayed in its saved rest pose.
+        const result = frame(object, false);
+        additionalScenes = gltf.scenes.filter((scene) => scene !== object);
+        return result;
+      } catch (e) {
+        disposeObject(object, gltf.scenes);
+        throw e;
+      }
+    }
     if (/\.stl$/i.test(meshPath)) {
       const geometry = new STLLoader().parse(buffer);
       geometry.computeVertexNormals();
@@ -220,10 +303,12 @@ export function createViewer(host: HTMLElement): ViewerHandle {
     load,
     clear,
     setView,
+    setMaterialMode: inspection.setMode,
     dispose() {
       running = false;
       observer.disconnect();
       clear();
+      inspection.dispose();
       material.dispose();
       controls.dispose();
       renderer.dispose();

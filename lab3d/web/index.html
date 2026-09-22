@@ -97,13 +97,15 @@
                   <div id="viewer" aria-label="Visualizador 3D interativo"></div>
                   <div id="viewer-empty" class="viewer-empty">nenhuma malha carregada</div>
                 </div>
-                <p class="hint viewer-help">Arraste para girar · role para aproximar · botão direito para deslocar. Os materiais MTL preservam as cores disponíveis; o visor não reproduz todos os efeitos do Blender.</p>
+                <p class="hint viewer-help">Arraste para girar · role para aproximar · botão direito para deslocar. GLB preserva os materiais e texturas incorporados; OBJ usa as cores disponíveis. A iluminação do visor pode diferir dos renders do Blender.</p>
                 <div class="views">
                   <button data-view="front">Frente</button>
                   <button data-view="left">Perfil E</button>
                   <button data-view="right">Perfil D</button>
                   <button data-view="back">Costas</button>
                   <button data-view="top">Topo</button>
+                  <button data-material="colors" aria-pressed="true" title="Restaurar materiais e texturas originais">Cores</button>
+                  <button data-material="gray" aria-pressed="false" title="Inspecionar a geometria com material uniforme, sem texturas">Material cinza</button>
                 </div>
               </figure>
             </div>

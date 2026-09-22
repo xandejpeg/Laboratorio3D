@@ -62,6 +62,8 @@ export interface PartLegendEntry {
 }
 
 export interface MeshArtifact {
+  /** Self-contained glTF 2.0 binary; authored orientation is Y-up. */
+  glbPath?: string | null;
   scadPath: string | null;
   stlPath: string | null;
   objPath: string | null;

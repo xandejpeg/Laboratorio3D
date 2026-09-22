@@ -9,6 +9,8 @@ import { CharacterRegistry } from "../src/registry.ts";
 import { probeOpenscad } from "../src/runtime.ts";
 import type { CharacterRecord } from "../contract/types.ts";
 import { syntheticFicha, syntheticPng, syntheticRecipe } from "./fixtures.ts";
+import { triangleGlb } from "./glb-fixture.ts";
+import { registerBlenderResult } from "../src/blender-result.ts";
 
 let root: string;
 let url: string;
@@ -93,6 +95,16 @@ beforeAll(async () => {
     briefDigest: sha256Hex("Hand-authored local SCAD fixture"), referenceFile: "front.png",
     options: { fixture: true, description: "Hand-authored SCAD; no LLM" },
   });
+  const blenderSource = join(root, "test-blender-source");
+  mkdirSync(blenderSource);
+  writeFileSync(join(blenderSource, "final.glb"), triangleGlb());
+  writeFileSync(join(blenderSource, "character.blend"), "BLENDER-v300synthetic-fixture");
+  const blenderManifest = join(blenderSource, "blender-result.json");
+  writeFileSync(blenderManifest, JSON.stringify({ contract: "lab3d.blender-result", contractVersion: 1,
+    runId: "fixture-blender-result", characterKey: fixture.key, referenceSha256: fixture.bundle.references[0]!.sha256,
+    title: "Synthetic GLB registration", blenderVersion: "synthetic-test", coordinates: "gltf-y-up",
+    artifacts: ["final.glb", "character.blend"], limitations: ["Synthetic triangle; no private model"] }));
+  registerBlenderResult(root, blenderManifest);
 }, 40_000);
 
 afterAll(async () => {
@@ -106,6 +118,28 @@ afterAll(async () => {
 });
 
 describe("laboratory HTTP import and boundaries", () => {
+  test("serves a registered GLB with Blender provenance and explicitly disables SCAD parameters", async () => {
+    const mesh = await request("/api/file?path=fixture-blender-result/final.glb");
+    expect(mesh.status).toBe(200);
+    expect(mesh.headers.get("content-type")).toBe("model/gltf-binary");
+    expect(sha256Hex(new Uint8Array(await mesh.arrayBuffer()))).toBe(sha256Hex(triangleGlb()));
+    const detail = await (await request("/api/run?id=fixture-blender-result")).json() as any;
+    expect(detail.final.glbPath).toBe("fixture-blender-result/final.glb");
+    const binding = await (await request("/api/lab/run-character?runId=fixture-blender-result")).json() as any;
+    expect(binding.record.key).toBe(fixture.key);
+    expect(binding.run.purpose).toBe("blender-authored");
+    const params = await (await request("/api/params?id=fixture-blender-result")).json() as any;
+    expect(params.params).toEqual([]);
+    expect(params.customizeAvailable).toBe(false);
+    expect(params.reason).toContain("Blender");
+    const customize = await post("/api/customize", { id: "fixture-blender-result", key: fixture.key, overrides: {} });
+    expect(customize.status).toBe(runtime.capabilities.recompileParams ? 422 : 503);
+    const evidence = await (await request("/api/lab/evidence?runId=fixture-blender-result")).json() as any;
+    expect(evidence.purpose).toBe("blender-authored");
+    expect(evidence.configuration.backend).toBe("blender");
+    expect(evidence.quality.approval).toBe("not-reviewed");
+    expect(evidence.usage.costUsd).toBeNull();
+  });
   test("reuses identical uploads and serves exactly their digested image", async () => {
     const response = await request("/api/lab/import", { method: "POST", body: upload() });
     expect(response.status).toBe(200);

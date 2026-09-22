@@ -161,7 +161,7 @@ function sortViews(a: ViewImage, b: ViewImage): number {
 
 // ── run detection ─────────────────────────────────────────────────────────
 
-const RUN_MARKERS = ["image.png", "draft.scad", "final.scad", "initial.scad"];
+const RUN_MARKERS = ["image.png", "draft.scad", "final.scad", "initial.scad", "final.glb"];
 
 function isRunDir(dir: string): boolean {
   if (RUN_MARKERS.some((m) => existsSync(join(dir, m)))) return true;
@@ -294,7 +294,7 @@ export function summarizeRun(root: string, dir: string): RunSummary {
 
   // STL is no longer exported by default — the OBJ is the mesh deliverable, so
   // accept either extension.
-  const hasFinalMesh = existsSync(join(dir, "final.stl")) || existsSync(join(dir, "final.obj")) || existsSync(join(dir, "ortho_reviewed.stl"));
+  const hasFinalMesh = existsSync(join(dir, "final.glb")) || existsSync(join(dir, "final.stl")) || existsSync(join(dir, "final.obj")) || existsSync(join(dir, "ortho_reviewed.stl"));
   const hasDraftMesh = existsSync(join(dir, "draft.stl")) || existsSync(join(dir, "draft.obj")) || existsSync(join(dir, "initial.stl"));
 
   const mtime = Math.max(
@@ -335,14 +335,16 @@ export function listRuns(root: string): RunSummary[] {
 // ── detail (per-run, lazy on heavy artifacts) ───────────────────────────────
 
 function meshArtifact(root: string, dir: string, base: string): MeshArtifact | null {
+  const glb = join(dir, `${base}.glb`);
   const scad = join(dir, `${base}.scad`);
   const stl = join(dir, `${base}.stl`);
   const obj = join(dir, `${base}.obj`);
   const mtl = join(dir, `${base}.mtl`);
-  const hasAny = existsSync(scad) || existsSync(stl) || existsSync(obj);
+  const hasAny = existsSync(glb) || existsSync(scad) || existsSync(stl) || existsSync(obj);
   if (!hasAny) return null;
   const scadText = readText(scad);
   return {
+    glbPath: existsSync(glb) ? rel(root, glb) : null,
     scadPath: existsSync(scad) ? rel(root, scad) : null,
     stlPath: existsSync(stl) ? rel(root, stl) : null,
     objPath: existsSync(obj) ? rel(root, obj) : null,
@@ -801,7 +803,7 @@ export function listDirEntries(root: string, runDir: string, sub: string): DirLi
 function classifyFile(name: string): FileKind {
   const ext = extname(name).toLowerCase();
   if (ext === ".png" || ext === ".jpg" || ext === ".jpeg") return "image";
-  if (ext === ".stl" || ext === ".obj") return "mesh";
+  if (ext === ".stl" || ext === ".obj" || ext === ".glb") return "mesh";
   if (ext === ".scad") return "scad";
   if (ext === ".json") return "json";
   if (ext === ".txt" || ext === ".md" || ext === ".jsonl" || ext === ".mtl" || ext === ".usda" || ext === ".urdf" || ext === ".log") return "text";

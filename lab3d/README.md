@@ -11,10 +11,15 @@ imagem + ficha 2D → briefing → plano de peças → módulos OpenSCAD →
 compilação → render no Blender → avaliação visual → correções → exportação
 ```
 
-O visualizador mostra **a geometria que o sistema produziu** — o OBJ/STL escrito
-pela execução. Ao abrir um personagem, ele restaura a malha mais recente vinculada
+O visualizador mostra **a geometria salva pela execução** — OBJ/STL do pipeline
+ou GLB de uma revisão registrada do Blender. Ao abrir um personagem, ele restaura a malha mais recente vinculada
 àquela importação. Também preserva as cores por vértice exportadas no OBJ, além
 dos materiais MTL; não busca texturas externas declaradas pelo arquivo.
+
+Resultados feitos no Blender são registrados por um CLI local, com a referência
+e os arquivos verificados por SHA-256. O GLB mantém seus materiais incorporados
+e a orientação Y-up; essa revisão recebe proveniência própria e não oferece
+recompilação OpenSCAD. O registro não executa geração nem aprova a qualidade.
 
 Reconstruções locais escritas por Codex são identificadas como tal. Elas podem
 usar a compilação e os renders reais do Procedura sem chamar o provedor externo;
@@ -41,6 +46,7 @@ verificado está em [WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md).
 | [docs/MILESTONE_1.md](docs/MILESTONE_1.md) | O que funciona, o que está bloqueado e os limites confirmados no código |
 | [docs/MECANICO_OFFLINE.md](docs/MECANICO_OFFLINE.md) | Compilação e renders mecânicos realmente executados sem modelo |
 | [docs/QUALITY_PROTOCOL.md](docs/QUALITY_PROTOCOL.md) | Referência feminina fixa, critérios e registro dos ensaios por IA |
+| [docs/BLENDER_RESULTS.md](docs/BLENDER_RESULTS.md) | Registrar uma revisão GLB/Blender vinculada ao snapshot 2D sem sobrescrever resultados |
 | [../ATTRIBUTION.md](../ATTRIBUTION.md) | Origem, licença e convivência com o upstream |
 
 ## Organização

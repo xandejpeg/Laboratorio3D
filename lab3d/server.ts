@@ -93,6 +93,8 @@ const MIME: Record<string, string> = {
   ".obj": "model/obj",
   ".mtl": "model/mtl",
   ".stl": "model/stl",
+  ".glb": "model/gltf-binary",
+  ".blend": "application/octet-stream",
   ".scad": "text/plain; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
   ".json": "application/json; charset=utf-8",
@@ -455,6 +457,10 @@ function handleJobStream(req: Request): Response {
 function handleParams(req: Request): Response {
   const r = runDirFromReq(req);
   if (r instanceof Response) return r;
+  if (readJsonFile(join(r.dir, "lab3d-execution.json"))?.backend === "blender") {
+    return json({ params: [], scadPath: null, customizeAvailable: false,
+      reason: "Este resultado foi criado no Blender; alterações requerem a fonte Blender, sem recompilação OpenSCAD." });
+  }
   const which = q(req, "which") ?? "final";
   const scadAbs = resolveScadFile(r.dir, which);
   if (!scadAbs) return fail("no SCAD file for this run", 404);
@@ -487,6 +493,9 @@ async function handleCustomize(req: Request): Promise<Response> {
   if (!body.id) return fail("missing id");
   const dir = resolveRunDir(ROOT, body.id);
   if (!dir) return fail("run not found", 404);
+  if (readJsonFile(join(dir, "lab3d-execution.json"))?.backend === "blender") {
+    return fail("Blender-authored results cannot be recompiled with OpenSCAD; edit the Blender source and register a new result", 422);
+  }
   const scadAbs = resolveScadFile(dir, body.which ?? "final");
   if (!scadAbs) return fail("no SCAD file for this run", 404);
   const parent = linkedRun(body.id);
