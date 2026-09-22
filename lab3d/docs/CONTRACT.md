@@ -220,9 +220,12 @@ a receita completa continua preservada no registro.
 
 ## 6. Demais rotas
 
+O envio direto entre os sites está documentado em [BRIDGE_2D.md](BRIDGE_2D.md); ele utiliza este mesmo contrato e endpoint de importação.
+
 | Rota | Método | Função |
 |------|--------|--------|
 | `/api/lab/runtime` | GET | O que a máquina consegue fazer agora (OpenSCAD, Blender, LLM, capacidades) |
+| `/api/lab/bridge-config` | GET | Versão e origens exatas autorizadas da ponte 2D |
 | `/api/lab/characters` | GET | Lista de personagens importados |
 | `/api/lab/character?key=` | GET | Registro + briefing + execuções |
 | `/api/lab/asset?key=&file=` | GET | Uma referência do registro |

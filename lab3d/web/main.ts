@@ -8,6 +8,7 @@
  */
 
 import { createViewer, type ViewerHandle } from "./viewer.ts";
+import { createBridgeReceiver } from "./bridge.ts";
 import type { RunDetail as StudioRunDetail, ViewImage } from "../../web/shared/types.ts";
 
 // ── shapes returned by /api/lab/* and the reused Studio routes ──────────────
@@ -211,6 +212,13 @@ function executionState(status: string, purpose?: string, completion?: { ok: boo
 
 const fileUrl = (path: string): string => `/api/file?path=${encodeURIComponent(path)}`;
 
+function updateCharacterAddress(key: string | null): void {
+  const url = new URL(location.href);
+  url.search = key ? `?character=${key}` : "";
+  url.hash = "";
+  history.replaceState(null, "", url);
+}
+
 function resetResult(message = "Nenhuma malha carregada para este personagem."): void {
   runVersion++;
   shownRunId = null;
@@ -366,6 +374,7 @@ async function selectCharacter(key: string): Promise<void> {
   }
   if (version !== selectionVersion) return;
   selected = data;
+  updateCharacterAddress(key);
   $("#empty").hidden = true;
   $("#character-panel").hidden = false;
   $("#progress-card").hidden = true;
@@ -417,6 +426,7 @@ async function refreshIndependentRuns(): Promise<void> {
 async function showIndependentRun(runId: string): Promise<void> {
   ++selectionVersion;
   selected = null;
+  updateCharacterAddress(null);
   closeStream();
   resetResult();
   setIndependentMode(true);
@@ -1045,6 +1055,35 @@ async function renderParams(runId: string, isCurrent: () => boolean, which: "dra
 
 // ── boot ────────────────────────────────────────────────────────────────────
 
+async function wire2DBridge(): Promise<void> {
+  if (window.top !== window || new URLSearchParams(location.search).get("bridge") !== "2dc") return;
+  const status = $("#bridge-status");
+  status.hidden = false;
+  if (!window.opener) {
+    setStatus(status, "Abra esta ligação pelo botão Enviar ao Laboratorio3D no gerador 2D.", "info");
+    return;
+  }
+  setStatus(status, "Aguardando o personagem enviado pelo gerador 2D…");
+  const opener = window.opener as Window;
+  try {
+    const config = await api<{ version: number; allowedOrigins: string[] }>("/api/lab/bridge-config");
+    const receive = createBridgeReceiver({ opener, allowedOrigins: config.allowedOrigins,
+      onStatus: (message, kind) => setStatus(status, message, kind),
+      importForm: async (form) => {
+        const result = await api<{ record: CharacterRecord; reused: boolean }>("/api/lab/import", { method: "POST", body: form });
+        await refreshCharacters();
+        await selectCharacter(result.record.key);
+        const url = new URL(location.href);
+        url.search = `?character=${result.record.key}`;
+        url.hash = "";
+        if (selected?.record.key === result.record.key) $("#character-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+        return { key: result.record.key, reused: result.reused, url: url.href };
+      },
+    });
+    window.addEventListener("message", (event) => { void receive(event); });
+  } catch (error) { setStatus(status, `Ligação com o 2D indisponível: ${(error as Error).message}`, "error"); }
+}
+
 for (const button of document.querySelectorAll<HTMLButtonElement>(".views button[data-view]")) {
   button.addEventListener("click", () => {
     ensureViewer();
@@ -1058,7 +1097,11 @@ $("#refresh-independent").addEventListener("click", () => void refreshIndependen
 resetResult();
 updateGenerationAvailability();
 void loadRuntime();
+void wire2DBridge();
 void refreshIndependentRuns();
-void refreshCharacters().catch((error: Error) => {
+void refreshCharacters().then(async () => {
+  const key = new URLSearchParams(location.search).get("character");
+  if (key && /^[a-f0-9]{64}$/.test(key) && !selected) await selectCharacter(key);
+}).catch((error: Error) => {
   $("#character-list").replaceChildren(el("li", { textContent: `Não foi possível listar personagens: ${error.message}` }));
 });

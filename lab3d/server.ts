@@ -32,6 +32,7 @@ import { buildBrief } from "./src/brief.ts";
 import { importCharacter, type IncomingImage } from "./src/import.ts";
 import { CharacterRegistry, RegistryConflict } from "./src/registry.ts";
 import { probeRuntime } from "./src/runtime.ts";
+import { bridgeOrigins } from "./src/bridge-origins.ts";
 import { collectEvidence, freezeEvidence, readJsonFile, UPSTREAM_COMMIT } from "./src/evidence.ts";
 
 const REPO = resolve(import.meta.dir, "..");
@@ -48,6 +49,7 @@ mkdirSync(LAB_ROOT, { recursive: true });
 const registry = new CharacterRegistry(LAB_ROOT);
 const dotEnv = parseEnvFile(join(REPO, ".env"));
 const effectiveEnv = { ...dotEnv, ...process.env };
+const allowed2DOrigins = bridgeOrigins(effectiveEnv["LAB3D_2D_ORIGINS"]);
 const runtime = probeRuntime(effectiveEnv);
 const childEnv: Record<string, string> = Object.fromEntries(Object.entries(effectiveEnv).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 // The core and customizer must execute the same binary that passed the probe.
@@ -604,6 +606,7 @@ const server = Bun.serve({
   development: DEV ? { hmr: true } : false,
   maxRequestBodySize: 96 * 1024 * 1024,
   routes: {
+    "/api/lab/bridge-config": { GET: local(() => json({ version: 1, allowedOrigins: allowed2DOrigins })) },
     "/api/lab/runtime": { GET: local(handleRuntime) },
     "/api/lab/import": { POST: local(handleImport) },
     "/api/lab/characters": { GET: local(handleCharacters) },

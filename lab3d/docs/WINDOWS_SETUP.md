@@ -86,6 +86,8 @@ bun run lab3d/server.ts
 
 ## Habilitar um ensaio com modelo
 
+Para conectar a prévia do gerador 2D ao laboratório sem baixar arquivos manualmente, veja [Envio direto do 2D](BRIDGE_2D.md). Essa conexão funciona sem configurar um modelo.
+
 Planejamento das peças, autoria OpenSCAD e crítica/refino visual precisam de um endpoint multimodal compatível com a rota selecionada. A PNG importada evita gerar uma nova referência por API. As strings do catálogo upstream são configurações do código; sua disponibilidade atual não foi verificada.
 
 Após definir provedor, modelo e orçamento autorizado, copie `.env.example` para `.env` **somente se `.env` ainda não existir** e configure no backend a chave correspondente. Não sobrescreva configuração existente, não coloque chaves no navegador e não envie `.env` ao Git.

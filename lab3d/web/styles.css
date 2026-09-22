@@ -43,6 +43,7 @@ a { color: var(--accent); }
 
 .brand strong { font-size: 16px; }
 .brand .sub { display: block; color: var(--muted); font-size: 12px; }
+.generator-link { display: inline-block; margin-top: 6px; font-size: 12px; }
 
 .runtime { font-size: 12px; color: var(--muted); text-align: right; max-width: 52ch; }
 .runtime .ok { color: var(--good); }
