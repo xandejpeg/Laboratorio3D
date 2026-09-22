@@ -87,6 +87,11 @@ export function buildBrief(bundle: CharacterBundle): CharacterBrief {
     if (!colorApplies(key, recipe.outfit, family)) continue;
     attributes.push(describeColor(key, recipe[key]));
   }
+  if (recipe.skin === `${family}-skin-0` && typeof recipe.skinSource === "string") {
+    const skin = attributes.find((a) => a.category === "skin");
+    const source = describeAttribute(family, "face", recipe.skinSource);
+    if (skin) skin.visual = `natural skin colour inherited from ${source.label ?? "the source identity"} [skinSource=${recipe.skinSource}], not necessarily the selected face. Preserve the colour visible in the PNG; no RGB value is invented.`;
+  }
 
   const unknownIds = attributes.filter((a) => !a.known).map((a) => ({ category: String(a.category), id: a.id }));
   const referenceOnly = attributes.filter((a) => a.known && a.referenceOnly);
@@ -105,11 +110,11 @@ export function buildBrief(bundle: CharacterBundle): CharacterBrief {
 
 /**
  * Regions the pipeline has to invent because no supplied reference shows them.
- * The list shrinks as labelled references are attached, and it is computed from
- * the angles actually present — not assumed.
+ * Only references actually connected to generation can reduce its uncertainty.
+ * Stored review images do not supply hidden geometry to the model.
  */
 export function inferredRegions(bundle: CharacterBundle): InferredRegion[] {
-  const angles = new Set(bundle.references.map((r) => r.angle));
+  const angles = new Set(bundle.references.filter((r) => r.influence === "pipeline").map((r) => r.angle));
   const out: InferredRegion[] = [];
   const add = (region: string, reason: string) => out.push({ region, reason });
 
@@ -161,6 +166,7 @@ function renderPrompt(bundle: CharacterBundle, attributes: DescribedAttribute[],
   lines.push("");
 
   lines.push("ATTRIBUTES (2D id → appearance)");
+  lines.push("Descriptions and art-direction ratios are context, not measurements of this export. If they conflict with visible anatomy, clothing or footwear, preserve the attached image.");
   for (const a of attributes) {
     const title = CATEGORY_TITLES[a.category as RecipeCategory] ?? COLOR_TITLES[a.category as keyof typeof COLOR_TITLES] ?? a.category;
     if (!a.known) {

@@ -23,7 +23,9 @@ function sortDeep(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortDeep);
   if (value && typeof value === "object") {
     const src = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
+    // JSON allows an own __proto__ key. A normal object silently loses it via
+    // the prototype setter, producing the same hash for different recipes.
+    const out: Record<string, unknown> = Object.create(null);
     for (const k of Object.keys(src).sort()) {
       if (src[k] === undefined) continue;
       out[k] = sortDeep(src[k]);
@@ -68,7 +70,12 @@ export function characterKey(bundle: CharacterBundle): string {
 
 /** Digest of the whole bundle, used to detect a conflicting re-import. */
 export function contentDigest(bundle: CharacterBundle): string {
-  return sha256Hex(canonicalJson(bundle));
+  const { exportedAt: _exportedAt, ...source } = bundle.source;
+  return sha256Hex(canonicalJson({
+    ...bundle,
+    source,
+    references: [...bundle.references].sort((a, b) => a.angle.localeCompare(b.angle)),
+  }));
 }
 
 export const shortKey = (key: string): string => key.slice(0, 12);

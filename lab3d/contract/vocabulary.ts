@@ -195,7 +195,7 @@ const OUTFIT: VocabularyEntry[] = [
   {
     label: "Macacão cinza",
     visual:
-      "plain medium-gray opaque matte fitted long-sleeved ONE-PIECE COVERALL: small round collar at the base of the neck, covered shoulders, torso and arms down to the wrists, fitted legs down to the ankles, thin plain gray low-profile shoes. Neck and hands remain bare skin. No belt, cargo pockets, straps, vest, zipper or decoration; plain gray across the whole garment. Fabric follows the natural body silhouette smoothly — it is a neutral anatomy-readable base garment, not armour and not a glossy suit",
+      "plain medium-gray opaque matte long-sleeved ONE-PIECE COVERALL: round collar, covered shoulders and arms down to the wrists, legs down to the ankles. Neck and hands remain bare skin. Preserve the actual seams, folds and gray footwear visible in the reference; do not substitute a shoe design from an earlier art prompt. Fabric follows the selected body's natural silhouette. The reference image takes priority over this garment shorthand",
   },
   {
     label: "Conjunto 1",

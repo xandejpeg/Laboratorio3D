@@ -80,12 +80,14 @@ export interface FactRow {
   label: string;
   value: string;
   id?: string;
-  color?: string;
+  color?: string | null;
+  [extra: string]: unknown;
 }
 
 export interface FactGroup {
   title: string;
   rows: FactRow[];
+  [extra: string]: unknown;
 }
 
 /**
@@ -154,7 +156,7 @@ export interface CharacterBundle {
    * record one — the lab never substitutes a guess.
    */
   physicalHeightCm: number | null;
-  /** Front composite dimensions declared by the exporter (900 × 1280). */
+  /** Dimensions declared by the exporter, or measured from the uploaded front. */
   front: { width: number; height: number };
   references: ReferenceImage[];
   /** Caller-declared readiness flags, carried verbatim. */

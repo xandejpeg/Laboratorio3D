@@ -56,16 +56,16 @@ export function prepareImport(rawPayload: unknown, images: IncomingImage[], fall
       problems.push(`duplicate reference angle "${img.angle}"`);
       continue;
     }
+    seen.add(img.angle);
     if (img.bytes.length > MAX_IMAGE_BYTES) {
       problems.push(`${img.angle}: image is larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
       continue;
     }
     const info = sniffImage(img.bytes);
-    if (!info) {
-      problems.push(`${img.angle}: not a PNG, JPEG or WebP image`);
+    if (!info || !info.width || !info.height) {
+      problems.push(`${img.angle}: not a PNG, JPEG or WebP image with readable positive dimensions`);
       continue;
     }
-    seen.add(img.angle);
     const file = `${img.angle}${info.ext}`;
     references.push({
       angle: img.angle,
@@ -79,18 +79,18 @@ export function prepareImport(rawPayload: unknown, images: IncomingImage[], fall
       influence: img.angle === "front" ? "pipeline" : "stored",
       ...(img.note ? { note: img.note } : {}),
     });
-    stored.push({ angle: img.angle, file, bytes: img.bytes });
+    stored.push({ angle: img.angle, file, bytes: img.bytes.slice() });
   }
 
-  if (!seen.has("front") && !problems.length) {
+  if (!references.some((r) => r.angle === "front")) {
     problems.push('the frontal reference is required and must be sent with angle "front"');
   }
   if (problems.length) throw new ContractError("import rejected", problems);
 
   const bundle = adaptToBundle(rawPayload, { references, ...(fallbackName ? { fallbackName } : {}) });
 
-  // The 2D generator states the front composite size; a mismatch means the PNG
-  // and the sheet do not belong together, which must not be silently accepted.
+  // Dimensions detect an incompatible export size. Matching dimensions alone
+  // cannot prove that the image depicts the recipe in the sheet.
   const front = references.find((r) => r.angle === "front")!;
   if (
     front.width !== null &&

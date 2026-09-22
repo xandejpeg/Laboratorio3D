@@ -42,6 +42,10 @@ describe("shape detection", () => {
   test("rejects an unrecognised payload instead of improvising", () => {
     expect(() => detectShape({ hello: "world" })).toThrow(ContractError);
   });
+
+  test("never treats a different explicit contract as a legacy ficha", () => {
+    expect(() => detectShape(syntheticFicha({ contract: "another.contract" }))).toThrow(ContractError);
+  });
 });
 
 describe("recipe validation", () => {
@@ -96,11 +100,60 @@ describe("adapters", () => {
       ContractError,
     );
   });
+
+  test("retains natural-skin null colour and future ficha data without coercion", () => {
+    const characteristics = [{ title: "Pele", future: { revision: 2 }, rows: [
+      { key: "skin", label: "Pele", value: "Natural", id: "female-skin-0", color: null, future: { material: "natural" } },
+    ] }];
+    const bundle = adaptToBundle(syntheticFicha({ characteristics }), { references: [frontRef()] });
+    expect(bundle.characteristics).toEqual(characteristics);
+    expect(() => adaptToBundle(syntheticFicha({ characteristics: [{ title: "Pele", rows: [{ key: "skin", label: "Pele", value: {} }] }] }), { references: [frontRef()] })).toThrow(ContractError);
+  });
+
+  test("refuses coerced version, height and fractional dimensions", () => {
+    expect(() => adaptToBundle(syntheticBundlePayload({ contractVersion: "1" }), { references: [frontRef()] })).toThrow(ContractError);
+    expect(() => adaptToBundle(syntheticFicha({ physicalHeightCm: "168" }), { references: [frontRef()] })).toThrow(ContractError);
+    expect(() => adaptToBundle(syntheticFicha({ front: { width: 900.5, height: 1280 } }), { references: [frontRef()] })).toThrow(ContractError);
+  });
+
+  test("dimensions absent from a receita come from the reference", () => {
+    const bundle = adaptToBundle(syntheticReceita(), { references: [{ ...frontRef(), width: 512, height: 768 }] });
+    expect(bundle.front).toEqual({ width: 512, height: 768 });
+  });
+
+  test("detaches nested recipe and reference data from the caller", () => {
+    const recipe = { ...syntheticRecipe(), extension: { shape: "original" } };
+    const ref = frontRef();
+    const bundle = adaptToBundle(syntheticFicha({ recipe }), { references: [ref] });
+    recipe.extension.shape = "changed";
+    ref.sha256 = "changed";
+    expect(bundle.recipe["extension"]).toEqual({ shape: "original" });
+    expect(bundle.references[0]!.sha256).toBe("aaaa");
+  });
 });
 
 describe("identity", () => {
   test("canonical JSON is key-order independent", () => {
     expect(canonicalJson({ b: 1, a: { d: 2, c: 3 } })).toBe(canonicalJson({ a: { c: 3, d: 2 }, b: 1 }));
+  });
+
+  test("every JSON key, including __proto__, contributes to identity", () => {
+    const extra = JSON.parse('{"__proto__":{"shape":"original"},"nested":{"__proto__":"kept"}}');
+    expect(canonicalJson(extra)).toBe('{"__proto__":{"shape":"original"},"nested":{"__proto__":"kept"}}');
+    const a = adaptToBundle(syntheticFicha(), { references: [frontRef()] });
+    const b = adaptToBundle(syntheticFicha({ recipe: { ...syntheticRecipe(), ...extra } }), { references: [frontRef()] });
+    expect(characterKey(a)).not.toBe(characterKey(b));
+  });
+
+  test("reference order and export timestamp do not cause false content conflicts", () => {
+    const a = adaptToBundle(syntheticBundlePayload(), { references: [frontRef(), backRef] });
+    const b = structuredClone(a);
+    b.references.reverse();
+    b.source.exportedAt = "2026-09-22T12:00:00.000Z";
+    expect(characterKey(a)).toBe(characterKey(b));
+    expect(contentDigest(a)).toBe(contentDigest(b));
+    b.references[0]!.note = "A materially different annotation";
+    expect(contentDigest(a)).not.toBe(contentDigest(b));
   });
 
   test("the same character imported twice yields the same key", () => {
@@ -177,9 +230,9 @@ describe("brief", () => {
     expect(regions.toLowerCase()).toContain("depth");
   });
 
-  test("a supplied back reference removes the back from the inferred list", () => {
+  test("a stored back reference does not pretend to inform generation", () => {
     const withBack = buildBrief(adaptToBundle(syntheticFicha(), { references: [frontRef(), backRef] }));
-    expect(withBack.inferredRegions.map((r) => r.region).join(" | ")).not.toContain("back of the body");
+    expect(withBack.inferredRegions.map((r) => r.region).join(" | ")).toContain("back of the body");
   });
 
   test("unknown ids reach the UI instead of being silently dropped", () => {
@@ -217,5 +270,25 @@ describe("image sniffing", () => {
 
   test("rejects a non-image payload", () => {
     expect(sniffImage(new TextEncoder().encode("not an image at all"))).toBeNull();
+  });
+
+  test("rejects a truncated PNG and a header with no pixel chunks", () => {
+    const png = syntheticPng(2, 3);
+    expect(sniffImage(png.subarray(0, 24))).toBeNull();
+    expect(sniffImage(png.subarray(0, 33))).toBeNull();
+    expect(sniffImage(png.subarray(0, png.length - 12))).toBeNull();
+  });
+
+  test("reads dimensions from a lossless WebP frame header", () => {
+    const bytes = new Uint8Array(26);
+    bytes.set(new TextEncoder().encode("RIFF"));
+    const view = new DataView(bytes.buffer);
+    view.setUint32(4, 18, true);
+    bytes.set(new TextEncoder().encode("WEBPVP8L"), 8);
+    view.setUint32(16, 5, true);
+    bytes[20] = 0x2f;
+    view.setUint32(21, (899 | (1279 << 14)), true);
+    expect(sniffImage(bytes)).toEqual({ mime: "image/webp", ext: ".webp", width: 900, height: 1280 });
+    expect(sniffImage(bytes.subarray(0, 22))).toBeNull();
   });
 });
