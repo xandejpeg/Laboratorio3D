@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Laboratorio3D</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <strong>Laboratorio3D</strong>
+        <span class="sub">personagem 2D → geometria 3D pelo pipeline Procedura</span>
+      </div>
+      <div id="runtime" class="runtime">verificando ambiente…</div>
+    </header>
+
+    <main class="layout">
+      <aside class="column column-left">
+        <section class="card">
+          <h2>1 · Importar personagem</h2>
+          <p class="hint">
+            Aceita <code>2dc-ficha-*.json</code>, <code>2dc-receita.json</code> ou um pacote
+            <code>lab3d.character-import</code> v1, junto do PNG frontal 900×1280.
+          </p>
+          <form id="import-form">
+            <label class="field">
+              <span>Ficha / receita (JSON) <em>obrigatório</em></span>
+              <input type="file" name="sheet" accept="application/json,.json" required />
+            </label>
+            <label class="field">
+              <span>PNG frontal <em>obrigatório</em></span>
+              <input type="file" name="front" accept="image/png,image/jpeg,image/webp" required />
+            </label>
+            <details class="extra">
+              <summary>Referências adicionais (opcional)</summary>
+              <p class="hint small">
+                São guardadas e rotuladas, mas <strong>não entram na geração</strong>: o gerador
+                upstream aceita uma única imagem. O status de cada referência aparece na ficha.
+              </p>
+              <label class="field"><span>Perfil esquerdo</span><input type="file" name="profile-left" accept="image/*" /></label>
+              <label class="field"><span>Perfil direito</span><input type="file" name="profile-right" accept="image/*" /></label>
+              <label class="field"><span>Costas</span><input type="file" name="back" accept="image/*" /></label>
+            </details>
+            <label class="field">
+              <span>Nome (opcional)</span>
+              <input type="text" name="name" placeholder="Ex.: Serena — macacão cinza" />
+            </label>
+            <button type="submit" class="primary">Importar</button>
+          </form>
+          <div id="import-status" class="status"></div>
+        </section>
+
+        <section class="card">
+          <h2>Personagens importados</h2>
+          <ul id="character-list" class="list"></ul>
+        </section>
+      </aside>
+
+      <section class="column column-main">
+        <div id="empty" class="card empty">
+          Importe um personagem ou selecione um já importado para ver a ficha, o resumo enviado ao
+          pipeline e os resultados.
+        </div>
+
+        <div id="character-panel" hidden>
+          <section class="card">
+            <div class="card-head">
+              <h2 id="character-name">—</h2>
+              <code id="character-key" class="key"></code>
+            </div>
+            <div class="compare">
+              <figure>
+                <figcaption>Referência 2D (autoridade)</figcaption>
+                <div class="ref-box"><img id="ref-image" alt="referência frontal do personagem" /></div>
+              </figure>
+              <figure>
+                <figcaption>
+                  Modelo gerado
+                  <span id="mesh-info" class="muted"></span>
+                </figcaption>
+                <div class="ref-box viewer-box">
+                  <div id="viewer"></div>
+                  <div id="viewer-empty" class="viewer-empty">nenhuma malha carregada</div>
+                </div>
+                <div class="views">
+                  <button data-view="front">Frente</button>
+                  <button data-view="left">Perfil E</button>
+                  <button data-view="right">Perfil D</button>
+                  <button data-view="back">Costas</button>
+                  <button data-view="top">Topo</button>
+                </div>
+              </figure>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>2 · Ficha recebida</h2>
+            <div id="facts"></div>
+          </section>
+
+          <section class="card">
+            <h2>3 · O que o pipeline vai receber</h2>
+            <div id="brief-warnings"></div>
+            <details>
+              <summary>Texto enviado ao Procedura</summary>
+              <pre id="brief-text" class="pre"></pre>
+            </details>
+          </section>
+
+          <section class="card">
+            <h2>4 · Executar</h2>
+            <div class="actions">
+              <div class="action">
+                <strong>Gerar modelo novo</strong>
+                <p class="hint small">
+                  Executa o pipeline completo: planejamento, peças OpenSCAD, compilação, renders no
+                  Blender e refino. Usa o modelo de linguagem e leva minutos, não segundos.
+                </p>
+                <label class="inline">
+                  Ciclos de refino
+                  <input id="max-steps" type="number" min="0" max="20" value="4" />
+                </label>
+                <label class="inline"><input id="opt-paint" type="checkbox" /> Pintar materiais (fase extra)</label>
+                <label class="inline"><input id="opt-context" type="checkbox" /> Renders de contexto por peça (mais lento)</label>
+                <button id="generate" class="primary">Gerar</button>
+              </div>
+              <div class="action">
+                <strong>Recompilar parâmetros</strong>
+                <p class="hint small">
+                  Recompila a geometria já gerada com novos valores, sem chamar o modelo de
+                  linguagem. Requer OpenSCAD e um resultado anterior.
+                </p>
+              </div>
+              <div class="action">
+                <strong>Visualizar pronto</strong>
+                <p class="hint small">Abre um resultado anterior sem executar nada.</p>
+              </div>
+            </div>
+            <div id="generate-status" class="status"></div>
+          </section>
+
+          <section class="card">
+            <h2>5 · Execuções deste personagem</h2>
+            <ul id="run-list" class="list"></ul>
+          </section>
+
+          <section class="card" id="progress-card" hidden>
+            <h2>Progresso</h2>
+            <div id="progress-summary" class="progress-summary"></div>
+            <button id="cancel-job" class="ghost">Cancelar execução</button>
+            <details open>
+              <summary>Log do processo</summary>
+              <pre id="job-log" class="pre log"></pre>
+            </details>
+          </section>
+
+          <section class="card" id="result-card" hidden>
+            <h2>Resultado</h2>
+            <div id="result-verdict"></div>
+            <h3>Arquivos exportados</h3>
+            <ul id="file-list" class="list files"></ul>
+            <h3>Parâmetros suportados</h3>
+            <div id="params"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
