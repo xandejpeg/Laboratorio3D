@@ -241,7 +241,10 @@ export async function compileCustom(opts: {
   })).digest("hex");
   const stlAbs = join(cacheDir, `${key}.stl`);
   // Publish only complete output. Simultaneous requests cannot read a partial STL.
-  const temporaryStl = join(cacheDir, `${key}-${randomUUID()}.stl`);
+  // Keep the temporary name short: OpenSCAD on Windows can silently emit no
+  // file when an otherwise valid nested workspace exceeds MAX_PATH. The
+  // random UUID still isolates writers; the published cache retains its hash.
+  const temporaryStl = join(cacheDir, `${randomUUID()}.stl`);
   const stlRel = relative(root, stlAbs).split("\\").join("/");
 
   if (existsSync(stlAbs) && statSync(stlAbs).size > 0) {
