@@ -33,31 +33,43 @@ bun install
 A instalação na raiz não é opcional: o gerenciador de execuções só dispara a CLI
 quando `node_modules/` existe na raiz do repositório.
 
-## 2. OpenSCAD — necessário para gerar geometria (AUSENTE nesta máquina)
+## 2. OpenSCAD — necessário para gerar geometria
 
 Sem OpenSCAD o pipeline não compila nenhuma peça: não há malha, não há render,
 não há recompilação de parâmetros. A interface informa isso e `/api/lab/generate`
 responde `503` em vez de fingir progresso.
 
-Exija uma build **com backend Manifold** (OpenSCAD 2025.x / nightly). Uma build
-antiga com CGAL é ordens de magnitude mais lenta e o próprio upstream se recusa
-a usá-la a menos que `PROCEDURA_ALLOW_CGAL_OPENSCAD=1` esteja definido.
+Verificado: **OpenSCAD 2026.09.18** em
+`%LOCALAPPDATA%\Programs\OpenSCAD-2026.09.18-x86-64\openscad.exe`, com backend
+**Manifold** confirmado.
 
-1. Baixe o instalador ou o ZIP de <https://openscad.org/downloads.html>
-   (seção *Development Snapshots*, Windows 64-bit).
-2. Instale, ou extraia em um diretório estável.
-3. Se não ficar em `C:\Program Files\OpenSCAD\openscad.exe`, aponte o caminho no
-   `.env` da raiz:
+Exija uma build **com backend Manifold** (snapshot de desenvolvimento). Uma
+build antiga com CGAL é ordens de magnitude mais lenta e o próprio upstream se
+recusa a usá-la a menos que `PROCEDURA_ALLOW_CGAL_OPENSCAD=1` esteja definido.
+
+O caminho usado aqui, sem exigir elevação:
+
+1. Baixe o ZIP portátil de <https://openscad.org/downloads.html> (seção
+   *Development Snapshots*, Windows 64-bit) e o `.sha256` correspondente.
+2. Confira o hash antes de extrair:
+
+   ```powershell
+   Get-FileHash .\OpenSCAD-<versão>-x86-64.zip -Algorithm SHA256
+   ```
+
+3. Extraia em `%LOCALAPPDATA%\Programs\`. O instalador `.exe` do snapshot é um
+   NSIS que pede elevação; o ZIP evita isso.
+4. Se preferir outro diretório, aponte o caminho no `.env` da raiz:
 
    ```
    OPENSCAD_PATH=D:\ferramentas\openscad\openscad.exe
    ```
 
-O laboratório procura, nesta ordem: `OPENSCAD_PATH`,
-`%ProgramFiles%\OpenSCAD\openscad.exe`, `OpenSCAD (Nightly)`,
-`%LOCALAPPDATA%\Programs\...` e por fim `where.exe openscad`. O caminho
-encontrado é injetado no ambiente do processo filho, porque o upstream só
-procura em `$HOME/opt`, `/usr/local/bin` e `/opt`.
+O laboratório procura, nesta ordem: `OPENSCAD_PATH`, qualquer diretório
+`OpenSCAD*` em `%ProgramFiles%`, `%ProgramFiles(x86)%` e
+`%LOCALAPPDATA%\Programs` (o mais recente primeiro), e por fim
+`where.exe openscad`. O caminho encontrado é injetado no ambiente do processo
+filho, porque o upstream só procura em `$HOME/opt`, `/usr/local/bin` e `/opt`.
 
 Confirme o backend depois de instalar: o `doctor` imprime `manifold sim/NÃO`.
 
@@ -139,5 +151,5 @@ verificado e é o recomendado.
 | Ficha, tradução dos IDs e briefing | funciona |
 | Registro imutável e reaproveitamento | funciona |
 | Visualizar malha de execução existente | funciona |
-| Gerar modelo novo | **bloqueado**: falta OpenSCAD e credencial de LLM |
-| Recompilar parâmetros | **bloqueado**: falta OpenSCAD |
+| Recompilar parâmetros com OpenSCAD | funciona |
+| Gerar modelo novo | **bloqueado**: falta credencial de LLM |

@@ -51,15 +51,25 @@ function programFiles(): string[] {
   ].filter(Boolean);
 }
 
+/** Directories named `OpenSCAD*` under a base — the snapshot ZIP unpacks as `OpenSCAD-<date>-x86-64`. */
+function openscadDirs(base: string): string[] {
+  try {
+    return readdirSync(base)
+      .filter((name) => name.toLowerCase().startsWith("openscad"))
+      .sort()
+      .reverse()
+      .map((name) => join(base, name, "openscad.exe"));
+  } catch {
+    return [];
+  }
+}
+
 export function probeOpenscad(): BinaryProbe {
   const notes: string[] = [];
   const fromEnv = process.env["OPENSCAD_PATH"];
   const candidates = [
     ...(fromEnv ? [fromEnv] : []),
-    ...programFiles().flatMap((base) => [
-      join(base, "OpenSCAD", "openscad.exe"),
-      join(base, "OpenSCAD (Nightly)", "openscad.exe"),
-    ]),
+    ...programFiles().flatMap(openscadDirs),
     join(homedir(), "opt", "openscad", "openscad.exe"),
   ];
   let path = firstExisting(candidates);

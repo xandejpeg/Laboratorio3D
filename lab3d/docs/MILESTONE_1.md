@@ -29,14 +29,39 @@ exercitadas por HTTP real:
 
 | Verificação | Resultado observado |
 |---|---|
-| `GET /api/lab/runtime` | Relata `openscad: null`, Blender 5.2.1 LTS encontrado, LLM não configurado, `generate: false` |
+| `GET /api/lab/runtime` | OpenSCAD 2026.09.18 com backend Manifold, Blender 5.2.1 LTS, LLM não configurado, `generate: false`, `recompileParams: true` |
 | `POST /api/lab/import` (ficha + PNG 900×1280) | `201`, registro congelado, `reused: false` |
 | Reimportar a mesma combinação | `200`, `reused: true`, mesma chave, mesmo `importedAt` |
 | Importar com uma referência de costas anexada | `201`, **outra chave**, e as regiões sem referência caem de 5 para 4 |
 | PNG 512×512 com ficha que declara 900×1280 | `422 front image does not match the sheet` |
-| `POST /api/lab/generate` | `503 generation unavailable: OpenSCAD was not found` |
+| `POST /api/lab/generate` | `503 generation unavailable: no LLM credential is configured` |
 | `GET /api/lab/asset?...&file=../record.json` | `404` — o caminho não escapa do registro |
 | `GET /` e bundle da interface | `200`; CSS 7 kB e JS 1,47 MB (inclui three.js) servidos |
+
+### Compilação real com OpenSCAD
+
+Com o OpenSCAD instalado, a cadeia de compilação e recompilação foi exercitada
+de ponta a ponta sobre um SCAD paramétrico (flange com furos):
+
+| Verificação | Resultado observado |
+|---|---|
+| Compilação com `--backend Manifold` | STL 249 kB e OBJ 27 kB, **1.084 facetas** |
+| `GET /api/params` | Os 6 parâmetros do SCAD, `customizeAvailable: true` |
+| `POST /api/customize` com parâmetro inexistente | `422` — só recompila o que o SCAD declara |
+| `POST /api/customize` pela interface (`bolt_count` 4 → 8) | `200` em **0,3 s**, malha passa de 1.084 para **1.356 triângulos** |
+
+### Interface em navegador real
+
+Verificada com o navegador controlado por automação, **zero erros de console**:
+
+- O aviso de capacidades mostra `✓ importar · ✕ gerar · ✓ recompilar · ✓ crítica
+  visual` com a causa do bloqueio escrita por extenso.
+- Selecionar um personagem carrega a referência 2D em 900×1280, a ficha
+  traduzida, os avisos de regiões sem referência e o briefing.
+- "Visualizar pronto" abre uma execução existente **sem executar nada**, e o
+  visualizador desenha a malha que o OpenSCAD produziu — os 8 furos aparecem na
+  tela depois da recompilação, confirmando que a geometria exibida é a do
+  sistema, não um modelo montado à mão.
 
 Suíte de testes: **37 testes, 0 falhas** (`bun test` em `lab3d/`).
 Verificação de tipos: **limpa** (`tsc --noEmit`).
@@ -61,6 +86,8 @@ nenhum export real e nenhuma credencial entram no repositório.
   recompilar / visualizar), progresso real por SSE com o log do processo,
   comparação lado a lado 2D × 3D, órbita e zoom, lista de arquivos exportados,
   histórico de execuções e editor dos parâmetros que o Procedura de fato expõe.
+- **Compilação e recompilação** de geometria com OpenSCAD/Manifold, medida em
+  frações de segundo, com a malha recarregada no visualizador.
 - **Sondagem de ambiente** para Windows, que alimenta `OPENSCAD_PATH` e
   `PROCEDURA_BLENDER_PATH` no processo filho — o upstream só procura em
   `$HOME/opt`, `/usr/local/bin` e `/opt`.
@@ -69,15 +96,20 @@ nenhum export real e nenhuma credencial entram no repositório.
 
 | Bloqueio | Consequência | Como destravar |
 |---|---|---|
-| **OpenSCAD não instalado** | Nenhuma peça compila: sem malha, sem render, sem recompilação de parâmetros | [WINDOWS_SETUP.md § 2](WINDOWS_SETUP.md) — exige build com backend Manifold |
-| **Sem credencial de LLM** | Planejamento, geração das peças e refino não podem começar | [WINDOWS_SETUP.md § 4](WINDOWS_SETUP.md) |
+| **Sem credencial de LLM** | Planejamento, geração das peças e refino não podem começar; sem eles não há SCAD para compilar | [WINDOWS_SETUP.md § 4](WINDOWS_SETUP.md) |
 
-Consequência direta: **os dois ensaios de qualidade não puderam ser executados**
-— nem a personagem feminina de macacão cinza, nem o objeto mecânico simples.
-O laboratório responde `503` com a causa em vez de exibir uma geração fingida.
+OpenSCAD deixou de ser bloqueio: foi instalado (snapshot 2026.09.18, ZIP
+portátil com SHA-256 conferido, sem elevação) e a recompilação de parâmetros
+já roda pela interface.
 
-Para executá-los é preciso, além do OpenSCAD: **confirmar provedor, modelo e
-orçamento autorizado**, já que cada execução é cobrada por chamada ao modelo.
+Consequência direta: **os dois ensaios de qualidade ainda não puderam ser
+executados** — nem a personagem feminina de macação cinza, nem o objeto
+mecânico simples. O laboratório responde `503` com a causa em vez de exibir uma
+geração fingida.
+
+Para executá-los é preciso **confirmar provedor, modelo e orçamento
+autorizado**, já que cada execução é cobrada por chamada ao modelo. A chave
+deve ser escrita direto no `.env` da raiz, que está no `.gitignore`.
 
 ## 5. Limites do estudo, confirmados no código atual
 
@@ -132,11 +164,10 @@ próprio painel de resultado, que a existência de malha não significa aprovaç
 
 ## 7. Próximos passos, em ordem
 
-1. Instalar OpenSCAD com backend Manifold e reexecutar `bun run lab3d/scripts/doctor.ts`.
-2. Configurar provedor/modelo e confirmar orçamento.
-3. Executar o ensaio do objeto mecânico simples (baixo custo, valida a cadeia
+1. Configurar provedor/modelo e confirmar orçamento.
+2. Executar o ensaio do objeto mecânico simples (baixo custo, valida a cadeia
    inteira: plano → peças → compilação → render → refino → exportação).
-4. Executar o ensaio da personagem de macacão cinza e comparar com a referência
+3. Executar o ensaio da personagem de macação cinza e comparar com a referência
    2D na tela de comparação.
-5. Registrar o resultado observado — inclusive o que o CSG não conseguir
+4. Registrar o resultado observado — inclusive o que o CSG não conseguir
    reproduzir — antes de considerar qualquer ajuste no pipeline.

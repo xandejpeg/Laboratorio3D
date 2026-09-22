@@ -90,6 +90,11 @@ interface JobProgress {
 interface MeshArtifact { scadPath: string | null; stlPath: string | null; objPath: string | null; mtlPath: string | null }
 interface ArtifactFile { path: string; bytes: number; kind: string }
 
+interface RunSummary {
+  id: string; title: string; status: string; mtime: number;
+  hasFinalMesh: boolean; hasDraftMesh: boolean;
+}
+
 interface RunDetail {
   id: string; status: string; verdict: string | null; finalSummary: string | null;
   draft: MeshArtifact | null; final: MeshArtifact | null; painted: MeshArtifact | null;
@@ -297,6 +302,7 @@ async function selectCharacter(key: string): Promise<void> {
   renderBriefWarnings(data.record, data.brief);
   $("#brief-text").textContent = data.brief.text;
   renderRuns(data.runs);
+  await refreshReadyRuns();
   await refreshCharacters();
 }
 
@@ -476,6 +482,31 @@ function wireGenerate(): void {
     if (!activeJobId) return;
     await api(`/api/jobs/cancel?id=${encodeURIComponent(activeJobId)}`, { method: "POST" });
   });
+
+  $("#open-ready").addEventListener("click", () => {
+    const id = $<HTMLSelectElement>("#ready-run").value;
+    if (id) void showRun(id);
+  });
+}
+
+/** Every run already on disk, so a finished model can be opened without executing anything. */
+async function refreshReadyRuns(): Promise<void> {
+  const select = $<HTMLSelectElement>("#ready-run");
+  let runs: RunSummary[] = [];
+  try {
+    ({ runs } = await api<{ runs: RunSummary[] }>("/api/runs"));
+  } catch {
+    /* the runs root may not exist yet */
+  }
+  const withMesh = runs.filter((r) => r.hasFinalMesh || r.hasDraftMesh);
+  select.replaceChildren(
+    ...(withMesh.length
+      ? withMesh.map((run) =>
+          el("option", { value: run.id, textContent: `${run.id} — ${run.title || run.status}`.slice(0, 80) }),
+        )
+      : [el("option", { value: "", textContent: "nenhum resultado com malha ainda" })]),
+  );
+  $<HTMLButtonElement>("#open-ready").disabled = !withMesh.length;
 }
 
 function closeStream(): void {
@@ -511,6 +542,7 @@ function followJob(jobId: string): void {
       renderProgress(null, ev.job);
       if (ev.job.status !== "running" && ev.job.status !== "queued") {
         closeStream();
+        void refreshReadyRuns();
         if (runId) void showRun(runId);
       }
     }

@@ -48,11 +48,12 @@ verificado está em [WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md).
 ## Estado
 
 Funciona hoje: importação, registro imutável, tradução dos IDs para descrições
-visuais, briefing, interface, progresso real e visualização de execuções.
+visuais, briefing, interface, progresso real, visualização de execuções e
+recompilação de parâmetros com OpenSCAD/Manifold.
 
-Bloqueado hoje: **geração** e **recompilação de parâmetros** — falta instalar
-OpenSCAD (com backend Manifold) e configurar uma credencial de modelo. O
-laboratório informa o bloqueio em vez de simular progresso.
+Bloqueado hoje: **geração de modelo novo** — falta configurar uma credencial de
+modelo de linguagem. O laboratório informa o bloqueio em vez de simular
+progresso.
 
 ## Privacidade
 

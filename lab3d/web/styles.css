@@ -77,7 +77,7 @@ code, pre { font-family: "Cascadia Mono", "Consolas", monospace; }
 .field > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .field em { color: var(--accent); font-style: normal; }
 
-input[type="file"], input[type="text"], input[type="number"] {
+input[type="file"], input[type="text"], input[type="number"], select {
   width: 100%;
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -87,6 +87,7 @@ input[type="file"], input[type="text"], input[type="number"] {
   font: inherit;
 }
 input[type="number"] { width: 90px; }
+.action select { margin-bottom: 8px; }
 
 .inline { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 6px 0; }
 

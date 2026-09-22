@@ -129,12 +129,15 @@
                 <strong>Recompilar parâmetros</strong>
                 <p class="hint small">
                   Recompila a geometria já gerada com novos valores, sem chamar o modelo de
-                  linguagem. Requer OpenSCAD e um resultado anterior.
+                  linguagem. Requer OpenSCAD e um resultado anterior. Os controles aparecem em
+                  <em>Resultado</em>, depois que um resultado é aberto.
                 </p>
               </div>
               <div class="action">
                 <strong>Visualizar pronto</strong>
-                <p class="hint small">Abre um resultado anterior sem executar nada.</p>
+                <p class="hint small">Abre um resultado existente sem executar nada.</p>
+                <select id="ready-run"></select>
+                <button id="open-ready">Abrir</button>
               </div>
             </div>
             <div id="generate-status" class="status"></div>
