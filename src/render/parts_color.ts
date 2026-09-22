@@ -83,7 +83,7 @@ export async function renderPartsColorViews(
   const size = opts.size ?? 640;
   const samples = opts.samples ?? 64;
   const palette = opts.palette ?? DEFAULT_PALETTE;
-  const gpu = opts.gpu ?? true;
+  const gpu = opts.gpu ?? (process.env["PROCEDURA_RENDER_GPU"] !== "0");
   const edges = opts.edges ?? false;
   const engine = opts.engine
     ?? (process.env["PROCEDURA_RENDER_ENGINE"] === "eevee" ? "eevee" : "cycles");

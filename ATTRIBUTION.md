@@ -12,6 +12,8 @@ O **Laboratorio3D** é fundado no **[Procedura](https://github.com/SpatiaOS/Proc
 
 A versão inicial encontrada nesta continuidade era `fd3faf6`, já derivada do commit acima. Não houve reimportação, substituição desse trabalho ou force push.
 
+Durante a implementação, `origin/main` recebeu `1634b09` e `936931d`. Esses commits foram integrados por merge, preservando as correções e os registros de validação paralelos.
+
 O [README upstream original](https://github.com/SpatiaOS/Procedura/blob/fac191ed49f55fcc2e0f23897e986042249f59fe/README.md) permanece na história. A apresentação original continua abaixo da introdução ao laboratório no README atual.
 
 ## Reutilização e adaptações
@@ -22,6 +24,7 @@ As primeiras adaptações viviam somente em `lab3d/`. Esta continuidade corrige 
 
 - `src/runtime/`: descoberta Windows/Linux e encerramento de workers.
 - `src/scad/compile.ts` e `src/render/*.ts`: caminhos Windows, subprocessos e falhas reais.
+- `src/pipeline/{draft,draft-incremental,motion,paint,refine,refine-direct}.ts` e `src/tools/diagnose.ts`: caminhos de prompts com `fileURLToPath`, preservando drive Windows e espaços. O render também respeita `PROCEDURA_RENDER_GPU=0` para selecionar CPU.
 - `web/server/customize.ts`: cache dependente da fonte, publicação após sucesso e timeout.
 - `web/server/jobs.ts`: diretórios reservados na fila, logs persistidos, cancelamento e opções efetivas.
 - `web/shared/types.ts`: opção de exportar STL.

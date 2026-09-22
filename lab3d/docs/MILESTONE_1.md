@@ -13,7 +13,7 @@ O laboratório reutiliza a fila, scanner de execuções, parâmetros e compilaç
 ## Validação executada
 
 - Instalação das dependências pelos lockfiles e verificação de tipos da raiz e do laboratório.
-- Testes automatizados de contrato, integridade, fila, HTTP, isolamento de personagens e recompilação real pelo OpenSCAD. O registro de validação do commit informa a contagem final.
+- 72 testes automatizados, sem falhas, de contrato, integridade, fila, HTTP, isolamento de personagens e recompilação real pelo OpenSCAD.
 - Bun 1.3.8, OpenSCAD 2026.09.18/Manifold e Blender 5.2.1 LTS funcionando no Windows nativo. Isaac Sim não foi usado.
 - Suporte mecânico sintético compilado em STL e OBJ com 812 triângulos, renderizado em frente, perfil direito, costas e isométrica pelo Blender/Cycles em CPU.
 - Primeiro ensaio: 341 ms de compilação e 21.164 ms para quatro renders; total 22.747 ms. Repetição com publicação dos arquivos no laboratório: 253 ms de compilação, 71.612 ms de render e 73.332 ms no total. São medições locais, não promessa de latência.
@@ -23,6 +23,12 @@ O laboratório reutiliza a fila, scanner de execuções, parâmetros e compilaç
 - PNG e ficha reais foram exportados pelo gerador 2D, importados via multipart HTTP e conferidos na interface. Nenhum código do 2D foi alterado.
 
 O ensaio mecânico é um controle de runtime a partir de **SCAD sintético escrito manualmente**. Não valida planejamento ou autoria por IA. Seus arquivos aparecem como resultado independente, sem vínculo com personagem. Detalhes em [MECANICO_OFFLINE.md](MECANICO_OFFLINE.md).
+
+### Validações paralelas preservadas
+
+Os commits `1634b09` e `936931d`, recebidos de `origin/main` durante esta implementação e integrados por merge, registraram outro controle mecânico: `compileScad` em 180 ms com 452 triângulos, aviso de conectividade para duas peças desconectadas introduzidas no ensaio e duas vistas AO em CPU em 9,3 s. Esses números são do registro paralelo, não da peça de 812 triângulos medida acima.
+
+O registro paralelo também observou ausência de amostras por mais de quatro minutos no render OPTIX. A opção `PROCEDURA_RENDER_GPU=0` foi preservada e a instância local deste marco usa CPU. A causa de driver/dispositivo não foi isolada; não se generaliza esse resultado a outras GPUs. Foram preservadas também as correções de caminhos dos prompts Windows com `fileURLToPath`.
 
 ## Referência humana preparada
 

@@ -39,7 +39,9 @@ export function probeBlender(env: RuntimeEnv = process.env): BinaryProbe {
     return { name: "Blender", path: null, version: null, envVar: "PROCEDURA_BLENDER_PATH",
       notes: ["Blender executável não encontrado; renderização e avaliação visual estão indisponíveis."] };
   }
-  return { name: "Blender", path, version: result.output.split(/\r?\n/)[0]!, envVar: "PROCEDURA_BLENDER_PATH", notes: [] };
+  const notes = env.PROCEDURA_RENDER_GPU === "0"
+    ? ["Renderização configurada para CPU (PROCEDURA_RENDER_GPU=0)."] : [];
+  return { name: "Blender", path, version: result.output.split(/\r?\n/)[0]!, envVar: "PROCEDURA_BLENDER_PATH", notes };
 }
 
 export interface LlmProbe {

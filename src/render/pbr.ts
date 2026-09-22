@@ -138,7 +138,7 @@ export async function renderPbrViews(opts: RenderPbrOpts): Promise<RenderPbrResu
   if (opts.edgeBevel !== undefined) args.push("--edge-bevel", String(opts.edgeBevel));
   if (opts.keyHard !== undefined) args.push("--key-hard", String(opts.keyHard));
   if (hdri) args.push("--hdri", hdri);
-  if (opts.gpu ?? true) args.push("--gpu");
+  if (opts.gpu ?? (process.env["PROCEDURA_RENDER_GPU"] !== "0")) args.push("--gpu");
   log(`[pbr] ${opts.parts.length} parts, ${views.length} views${hdri ? " (studio HDRI)" : " (procedural env)"}`);
 
   const proc = Bun.spawn([BLENDER_BIN, ...args], { stdout: "pipe", stderr: "pipe" });

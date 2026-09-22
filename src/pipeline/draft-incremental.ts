@@ -36,6 +36,7 @@ import {
   mkdirSync, writeFileSync, readFileSync, existsSync, statSync, copyFileSync, rmSync,
 } from "node:fs";
 import { join, resolve, dirname, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
 import { createStageEmitter } from "../trajectory/emitter.ts";
@@ -89,7 +90,7 @@ import { createNoopSandbox } from "../sandbox/noop.ts";
 import { createFileTrajectoryWriter } from "../trajectory/writer.ts";
 import { DEFAULT_SCAD_MODEL, DEFAULT_IMAGE_MODEL } from "./draft.ts";
 
-const PROCEDURA_ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..", "..");
+const PROCEDURA_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const IMAGE_PROMPT_PATH     = join(PROCEDURA_ROOT, "prompts", "image_prompt.md");
 const PLAN_SYSTEM_PATH      = join(PROCEDURA_ROOT, "prompts", "plan_system.md");
 const PLAN_REVIEW_SYSTEM_PATH = join(PROCEDURA_ROOT, "prompts", "plan_review_system.md");

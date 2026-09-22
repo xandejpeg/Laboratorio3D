@@ -38,6 +38,16 @@ PROCEDURA_BLENDER_PATH=D:\ferramentas\Blender\blender.exe
 
 O OpenSCAD precisa anunciar `--backend` no `--help`. A alternativa explícita `PROCEDURA_ALLOW_CGAL_OPENSCAD=1` permite o backend antigo, com risco de compilações muito mais demoradas; CGAL não foi usado neste marco. Não execute o instalador Bash upstream no Windows nativo.
 
+### Seleção de CPU para render
+
+O trabalho paralelo integrado de `origin/main` registrou um render OPTIX sem amostras por mais de quatro minutos nesta máquina; CPU concluiu o controle. A causa de driver/dispositivo não foi isolada. Para a execução local validada, selecione CPU no `.env` da raiz ou na sessão PowerShell:
+
+```powershell
+$env:PROCEDURA_RENDER_GPU = '0'
+```
+
+Sem essa variável, o padrão upstream continua sendo GPU. O `doctor` informa quando CPU foi selecionada; isso não garante a conclusão de qualquer cena. O smoke abaixo solicita CPU explicitamente.
+
 ## Validar sem chamadas pagas
 
 ```powershell
@@ -86,7 +96,7 @@ Importação, briefing, consulta de resultados, renderização local e recompila
 
 ## Adaptações realizadas
 
-- Scripts Blender resolvidos com `fileURLToPath`, incluindo drive Windows e nomes com espaços.
+- Scripts Blender e arquivos de prompts resolvidos com `fileURLToPath`, incluindo drive Windows e nomes com espaços.
 - Descoberta de binários comum ao laboratório e núcleo, com probe de execução e timeout.
 - Blender recebe `--python-exit-code 1`; exceções Python tornam a renderização uma falha real.
 - Cancelamento/timeout encerram a árvore dos workers por `taskkill /T /F` no Windows.

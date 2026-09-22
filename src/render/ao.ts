@@ -30,7 +30,7 @@ export { DEFAULT_VIEWS };
 export type AOView = ViewName;
 
 // scripts/_render_ao_blender.py is a sibling asset of this TS module's dir.
-// dirname(import.meta.url) → .../Procedura/src/render
+// fileURLToPath preserves Windows drives and decodes spaces in the asset path.
 const SRC_RENDER_DIR = dirname(fileURLToPath(import.meta.url));
 const PROCEDURA_ROOT = resolve(SRC_RENDER_DIR, "..", "..");
 export const AO_RENDER_SCRIPT = join(PROCEDURA_ROOT, "scripts", "_render_ao_blender.py");
@@ -80,7 +80,8 @@ export async function renderAOViews(opts: RenderAOOpts): Promise<RenderAOResult>
   const edgeThickness = opts.edgeThickness ?? 1.2;
   const views = opts.views ?? DEFAULT_VIEWS;
   const timeoutMs = opts.timeoutMs ?? (Number(process.env.PROCEDURA_RENDER_TIMEOUT_MS) || 600_000);
-  const gpu = opts.gpu ?? true;
+  // CPU is the default when disabled by env; an explicit caller option wins.
+  const gpu = opts.gpu ?? (process.env["PROCEDURA_RENDER_GPU"] !== "0");
   const zUp = opts.zUp ?? true;
   const decimateAbove = opts.decimateAbove ?? 0;
 
