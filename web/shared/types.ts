@@ -512,6 +512,8 @@ export interface JobOptions {
   maxSteps?: number;
   agentModel?: string;
   scadModel?: string;
+  paintModel?: string;
+  motionModel?: string;
   imageModel?: string;
   /** Root-relative path of an uploaded reference image (from /api/upload). */
   imagePath?: string;
@@ -528,12 +530,26 @@ export interface JobOptions {
   exportStl?: boolean;
   motion?: boolean;
   motionUrdf?: boolean;
+  /** Export motion without attempting Isaac Sim validation. */
+  motionNoValidate?: boolean;
+}
+
+/** Non-secret execution recipe, captured before the subprocess starts. */
+export interface JobConfiguration {
+  mode: "procedura-automatic";
+  profile: Preset;
+  options: JobOptions;
+  models: { agent: string; scad: string; paint: string; motion: string };
+  environment: Record<string, string>;
+  physicalValidation: { requested: boolean; status: "not-run" | "skipped-unavailable" | "skipped-by-option"; requires: "Isaac Sim" };
 }
 
 export interface JobRecord {
   id: string;
   prompt: string;
   options: JobOptions;
+  /** Older persisted jobs may not have captured their effective recipe. */
+  effectiveConfiguration?: JobConfiguration;
   /** outDir relative to the runs root (= the run id once artifacts exist). */
   runId: string;
   status: JobStatus;

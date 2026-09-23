@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 import { basename, extname, join, relative, resolve } from "node:path";
 
 import { parseEnvFile } from "../web/server/env.ts";
-import { JobManager } from "../web/server/jobs.ts";
+import { buildJobRecipe, isaacLauncherAvailable, JobManager } from "../web/server/jobs.ts";
 import { compileCustom, extractParams, overrideToDefine, resolveScadFile } from "../web/server/customize.ts";
 import { listRuns, readRunDetail, resolveRunDir } from "../web/server/scan.ts";
 import { safeJoin } from "../web/server/safe.ts";
@@ -61,6 +61,13 @@ if (runtime.blender.path) {
 }
 
 const OPENSCAD = runtime.openscad.path ?? "openscad";
+// The current Procedura launcher requires Isaac's Linux python.sh. This is
+// availability only; it never asserts that a simulation has been performed.
+const isaac = {
+  available: isaacLauncherAvailable(childEnv),
+  validation: "not-run",
+  note: "USD e URDF não comprovam validação física. Sem Isaac Sim disponível, o pipeline continua sem essa validação.",
+};
 
 const jobs = new JobManager({
   root: ROOT,
@@ -118,6 +125,11 @@ function handleRuntime(): Response {
     labRoot: LAB_ROOT,
     repo: REPO,
     generationEnabled: jobs.enabled,
+    isaac,
+    generationPresets: {
+      best: { ...buildJobRecipe({ preset: "best" }, 4, childEnv, isaac.available).effectiveConfiguration,
+        referencePolicy: "existing-authoritative-image" },
+    },
     openscad: { ...runtime.openscad, effectivePath: OPENSCAD },
   });
 }
@@ -224,12 +236,18 @@ function handleAsset(req: Request): Response {
 
 interface LabGenerateRequest {
   key?: string;
+  preset?: JobOptions["preset"];
   maxSteps?: number;
   paint?: boolean;
   contextRenders?: boolean;
   exportStl?: boolean;
   agentModel?: string;
   scadModel?: string;
+  paintModel?: string;
+  motionModel?: string;
+  assembly?: boolean;
+  motion?: boolean;
+  motionUrdf?: boolean;
 }
 
 async function handleLabGenerate(req: Request): Promise<Response> {
@@ -267,13 +285,16 @@ async function handleLabGenerate(req: Request): Promise<Response> {
   const imagePath = relative(ROOT, imageAbs).split("\\").join("/");
 
   const options: JobOptions = { imagePath };
+  if (body.preset !== undefined && !["default", "best", "custom"].includes(body.preset)) return fail("invalid preset", 422);
+  if (body.preset !== undefined) options.preset = body.preset;
   const steps = body.maxSteps ?? 4;
   if (typeof steps !== "number" || !Number.isInteger(steps) || steps < 0 || steps > 20) return fail("maxSteps must be an integer from 0 to 20", 422);
   options.maxSteps = steps;
-  if (body.paint === true) options.paint = true;
-  if (body.contextRenders === true) options.contextRenders = true;
-  if (body.exportStl === true) options.exportStl = true;
-  for (const k of ["agentModel", "scadModel"] as const) {
+  for (const k of ["paint", "contextRenders", "exportStl", "assembly", "motion", "motionUrdf"] as const) {
+    if (body[k] !== undefined && typeof body[k] !== "boolean") return fail(`invalid ${k}`, 422);
+    if (body[k] === true) options[k] = true;
+  }
+  for (const k of ["agentModel", "scadModel", "paintModel", "motionModel"] as const) {
     const v = body[k];
     if (typeof v === "string" && v.trim() && v.length < 200) options[k] = v.trim();
     else if (v !== undefined) return fail(`invalid ${k}`, 422);
@@ -292,12 +313,15 @@ async function handleLabGenerate(req: Request): Promise<Response> {
       createdAt: new Date().toISOString(),
       briefDigest: sha256Hex(brief.text),
       referenceFile: front.file,
-      options: { ...options },
+      options: { mode: "procedura-automatic", ...job.options },
     };
     try {
       registry.linkRun(run);
       writeFileSync(join(ROOT, job.runId, "lab3d-execution.json"), JSON.stringify({
         ...run, upstreamCommit: UPSTREAM_COMMIT,
+        mode: "procedura-automatic",
+        effectiveConfiguration: job.effectiveConfiguration,
+        isaac,
         runtime: { bun: runtime.bun, openscad: runtime.openscad.version, blender: runtime.blender.version, llm: runtime.llm },
         referenceSha256: front.sha256,
       }, null, 2), { flag: "wx" });

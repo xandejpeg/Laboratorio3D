@@ -4,7 +4,7 @@ Este protocolo separa infraestrutura de fidelidade. A compilação mecânica sem
 
 ## Entradas congeladas
 
-- Personagem: PNG + ficha exportados juntos; registrar chave de importação, SHA-256 da imagem, receita completa, versão declarada e versão observada quando diferente. A referência atual usa macacão cinza, corpo Original, rosto Serena e cabelo Trançado.
+- Personagem: PNG + ficha exportados juntos; registrar chave de importação, SHA-256 da imagem, receita completa, versão declarada e versão observada quando diferente. O ensaio preparado usa macacão cinza e botas cinza com cadarço. A aparência do cabelo e das feições deve ser conferida na imagem específica da execução; nomes de estilos não substituem essa leitura.
 - Objeto mecânico: suporte em L com dois furos na base e dois na placa vertical; dimensões só quando explicitamente especificadas. A fixture sintética de runtime é um controle geométrico separado.
 - Referências rotuladas opcionais: registrar se cada imagem foi armazenada ou realmente fornecida a cada etapa. As costas e a profundidade da personagem permanecem inferidas na geração atual.
 

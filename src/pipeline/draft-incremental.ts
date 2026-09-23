@@ -2474,7 +2474,7 @@ export async function runIncrementalDraft(
             text:
               (textOnly
                 ? "Review this build plan against the text description. "
-                : "Review this build plan against the reference image and text. ") + +
+                : "Review this build plan against the reference image and text. ") +
               "ADD-AND-SHARPEN ONLY: add genuinely missing parts and sharpen vague " +
               "descriptions — never merge, remove, rename, or reorder the planned " +
               "parts, and keep the planner's left/right assignments.\n\n" +

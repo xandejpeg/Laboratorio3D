@@ -27,6 +27,7 @@ import { stopProcessTree } from "../../src/runtime/process.ts";
 
 import type {
   JobDetail,
+  JobConfiguration,
   JobEvent,
   JobOptions,
   JobPhase,
@@ -43,6 +44,70 @@ interface LiveJob extends JobRecord {
 
 const LOG_CAP = 2000;
 const LINE_CAP = 8192;
+
+/** One expansion for the API, persisted provenance and the actual subprocess. */
+export function buildJobRecipe(options: JobOptions, defaultMaxSteps: number, env: Record<string, string | undefined>, isaacAvailable?: boolean) {
+  const resolved: JobOptions = { maxSteps: defaultMaxSteps, ...options };
+  const environmentOverrides: Record<string, string> = {};
+  const fallbackModel = env["PROCEDURA_MODEL"] || "gpt-5.2";
+  if (resolved.preset === "best") {
+    Object.assign(resolved, {
+      maxSteps: 12, noImage: false, oneShot: false, contextRenders: true,
+      assembly: true, paint: true, motion: true, motionUrdf: true,
+    });
+    resolved.agentModel ??= fallbackModel;
+    resolved.scadModel ??= fallbackModel;
+    resolved.paintModel ??= fallbackModel;
+    resolved.motionModel ??= fallbackModel;
+    if (isaacAvailable === false) resolved.motionNoValidate = true;
+    Object.assign(environmentOverrides, {
+      PROCEDURA_LLM_TIMEOUT_MS: "1800000",
+      PROCEDURA_LLM_DEADLINE_MS: "1800000",
+      PROCEDURA_MAX_PARTS: "0",
+    });
+  }
+  // The CLI also enables motion implicitly for these flags. Reflect that in
+  // progress/provenance while preserving the CLI's existing custom behavior.
+  if (resolved.motionUrdf || resolved.motionModel || resolved.motionNoValidate) resolved.motion = true;
+  const effectiveEnv = { ...env, ...environmentOverrides };
+  // An explicit allowlist: never serialize credentials or arbitrary environment.
+  const environment: Record<string, string> = {};
+  for (const name of ["PROCEDURA_MODEL", "PROCEDURA_PROVIDER", "PROCEDURA_LLM_TIMEOUT_MS", "PROCEDURA_LLM_DEADLINE_MS", "PROCEDURA_MAX_PARTS", "OPENSCAD_PATH", "PROCEDURA_BLENDER_PATH", "PROCEDURA_ISAACSIM_PATH", "PROCEDURA_ALLOW_CGAL_OPENSCAD", "PROCEDURA_RENDER_GPU"]) {
+    if (effectiveEnv[name] !== undefined) environment[name] = effectiveEnv[name]!;
+  }
+  const effectiveConfiguration: JobConfiguration = {
+    mode: "procedura-automatic",
+    profile: resolved.preset ?? "default",
+    options: { ...resolved },
+    models: { agent: resolved.agentModel || fallbackModel, scad: resolved.scadModel || fallbackModel,
+      paint: resolved.paintModel || fallbackModel, motion: resolved.motionModel || fallbackModel },
+    environment,
+    physicalValidation: { requested: !!(resolved.motion || resolved.motionUrdf || resolved.motionModel || resolved.motionNoValidate),
+      status: resolved.motionNoValidate ? (isaacAvailable === false ? "skipped-unavailable" : "skipped-by-option") : "not-run", requires: "Isaac Sim" },
+  };
+  return { options: resolved, environmentOverrides, effectiveConfiguration };
+}
+
+export function isaacLauncherAvailable(env: Record<string, string | undefined>, platform: string = process.platform): boolean {
+  const path = env["PROCEDURA_ISAACSIM_PATH"] ?? join(env["HOME"] ?? "", "isaacsim");
+  return platform !== "win32" && existsSync(join(path, "python.sh"));
+}
+
+/** imageFile is the already copied run-local image, never an arbitrary URL. */
+export function buildJobArguments(options: JobOptions, outDir: string, promptFile: string, imageFile?: string): string[] {
+  const args = ["run", "scripts/procedura.ts", "-o", outDir, "--prompt-file", promptFile];
+  if (imageFile) args.push("--image", imageFile);
+  else if (options.noImage) args.push("--no-image");
+  for (const [key, flag] of [
+    ["oneShot", "--one-shot"], ["contextRenders", "--3d-feedback"], ["assembly", "--assembly"],
+    ["paint", "--paint"], ["exportStl", "--export-stl"], ["motion", "--motion"], ["motionUrdf", "--motion-urdf"], ["motionNoValidate", "--motion-no-validate"],
+  ] as const) if (options[key]) args.push(flag);
+  if (options.maxSteps != null) args.push("--max-steps", String(options.maxSteps));
+  for (const [key, flag] of [["agentModel", "--agent-model"], ["scadModel", "--scad-model"], ["paintModel", "--paint-model"], ["motionModel", "--motion-model"], ["imageModel", "--image-model"]] as const) {
+    if (options[key]) args.push(flag, options[key]!);
+  }
+  return args;
+}
 
 export interface JobManagerOpts {
   /** Runs root — jobs write to <root>/<runId>. */
@@ -94,10 +159,13 @@ export class JobManager {
     // Reserve the directory even while queued, so provenance can be frozen
     // before execution and callers never lose metadata behind a running job.
     mkdirSync(join(this.opts.root, runId), { recursive: true });
+    const env = { ...process.env, ...this.opts.childEnv };
+    const recipe = buildJobRecipe(options, this.opts.defaultMaxSteps, env, isaacLauncherAvailable(env));
     const job: LiveJob = {
       id,
       prompt,
-      options: { maxSteps: this.opts.defaultMaxSteps, ...options },
+      options: recipe.options,
+      effectiveConfiguration: recipe.effectiveConfiguration,
       runId,
       status: "queued",
       createdAt: Date.now(),
@@ -197,8 +265,8 @@ export class JobManager {
       mkdirSync(outDir, { recursive: true });
       const promptFile = join(outDir, "prompt_input.txt");
       writeFileSync(promptFile, job.prompt, "utf8");
-      const args = ["run", "scripts/procedura.ts", "-o", outDir, "--prompt-file", promptFile];
       const o = job.options;
+      let imageFile: string | undefined;
       // Reference: an uploaded image is copied INTO the run dir first, so the
       // run stays self-contained after _uploads is pruned.
       if (o.imagePath) {
@@ -206,27 +274,16 @@ export class JobManager {
         if (!existsSync(src)) throw new Error(`uploaded reference not found: ${o.imagePath}`);
         const dst = join(outDir, `image_input${extname(src).toLowerCase() || ".png"}`);
         copyFileSync(src, dst);
-        args.push("--image", dst);
-      } else if (o.noImage) {
-        args.push("--no-image");
+        imageFile = dst;
       }
-      if (o.oneShot) args.push("--one-shot");
-      if (o.contextRenders) args.push("--3d-feedback");
-      if (o.assembly) args.push("--assembly");
-      if (o.paint) args.push("--paint");
-      if (o.exportStl) args.push("--export-stl");
-      if (o.motion) args.push("--motion");
-      if (o.motionUrdf) args.push("--motion-urdf");
-      if (o.maxSteps != null) args.push("--max-steps", String(o.maxSteps));
-      if (o.agentModel) args.push("--agent-model", o.agentModel);
-      if (o.scadModel) args.push("--scad-model", o.scadModel);
-      if (o.imageModel) args.push("--image-model", o.imageModel);
+      const args = buildJobArguments(o, outDir, promptFile, imageFile);
+      const recipe = buildJobRecipe(o, this.opts.defaultMaxSteps, { ...process.env, ...this.opts.childEnv });
 
       this.appendLog(job, `$ bun ${args.join(" ")}`);
       this.appendLog(job, `# cwd ${repo}`);
       proc = Bun.spawn([process.execPath, ...args], {
         cwd: repo,
-        env: { ...process.env, ...this.opts.childEnv },
+        env: { ...process.env, ...this.opts.childEnv, ...recipe.environmentOverrides },
         stdout: "pipe",
         stderr: "pipe",
       });

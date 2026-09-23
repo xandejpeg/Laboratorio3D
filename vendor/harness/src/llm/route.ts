@@ -94,24 +94,63 @@ function makeSSE(): Framing<{ event: string; data: string }> {
       if (!body) return;
       const reader = body.getReader();
       const decoder = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split(/\r?\n/);
-        buf = lines.pop() ?? "";
-        let event = "message", data = "";
-        for (const line of lines) {
-          if (line === "") {
-            if (data) yield { event, data };
-            event = "message"; data = "";
-          } else if (line.startsWith("event:")) {
-            event = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            data += (data ? "\n" : "") + line.slice(5).trim();
+      // Lines AND event fields span arbitrary network/UTF-8 chunk boundaries.
+      let line = "", event = "message";
+      let data: string[] = [];
+      let skipLF = false;
+
+      function finishEvent(): { event: string; data: string } | undefined {
+        const result = data.length ? { event: event || "message", data: data.join("\n") } : undefined;
+        event = "message";
+        data = [];
+        return result;
+      }
+
+      function readLine(): { event: string; data: string } | undefined {
+        if (line === "") return finishEvent();
+        const colon = line.indexOf(":");
+        const field = colon < 0 ? line : line.slice(0, colon);
+        let value = colon < 0 ? "" : line.slice(colon + 1);
+        // SSE removes one optional ASCII space, not payload whitespace.
+        if (value.startsWith(" ")) value = value.slice(1);
+        if (field === "event") event = value;
+        else if (field === "data") data.push(value);
+        // Comments, id, retry and unknown fields are not part of this API.
+      }
+
+      function* readText(text: string): Generator<{ event: string; data: string }> {
+        let start = 0;
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i];
+          if (skipLF) {
+            skipLF = false;
+            if (char === "\n") { start = i + 1; continue; }
           }
+          if (char !== "\r" && char !== "\n") continue;
+          line += text.slice(start, i);
+          const result = readLine();
+          line = "";
+          skipLF = char === "\r";
+          start = i + 1;
+          if (result) yield result;
         }
+        line += text.slice(start);
+      }
+
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          yield* readText(decoder.decode(value, { stream: true }));
+        }
+        yield* readText(decoder.decode());
+        if (line !== "") readLine();
+        // Tolerate LLM gateways omitting the final blank line. Unlike strict
+        // EventSource, clean EOF dispatches pending data; read errors do not.
+        const result = finishEvent();
+        if (result) yield result;
+      } finally {
+        reader.releaseLock();
       }
     },
   };

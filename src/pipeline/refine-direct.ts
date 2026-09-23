@@ -60,6 +60,7 @@ import { parsePatchResponse, applyPatch } from "./refine-patch.ts";
 import { writeFinalOutputs, DEFAULT_REFINE_STEPS } from "./refine.ts";
 import type { RefineOpts, RefineResult } from "./refine.ts";
 import { timeStage } from "./stage-timer.ts";
+import { validateDiagnosis } from "./diagnosis-validation.ts";
 
 const DIAGNOSE_PROMPT_PATH = fileURLToPath(new URL("./diagnose-prompt.md", import.meta.url));
 const PATCH_PROMPT_PATH = fileURLToPath(new URL("./refine-patch-prompt.md", import.meta.url));
@@ -375,7 +376,18 @@ export async function runDirectRefine(opts: RefineOpts): Promise<RefineResult> {
     state.diagnosisHistory.push({ cycle, summary, raw: diagnosis });
     log(`  critic: ${summary.slice(0, 160)}`);
 
-    if (!hasHighIssue(diagnosis)) {
+    const diagnosisValidation = validateDiagnosis(diagnosis);
+    if (!diagnosisValidation.valid) {
+      verdict = "error";
+      summary = diagnosisValidation.reason!;
+      writeFileSync(join(stepDir, "summary.json"), JSON.stringify({
+        cycle, accepted: false, invalidDiagnosis: true, note: summary,
+      }, null, 2), "utf8");
+      log(`  invalid diagnosis — ${summary}`);
+      break;
+    }
+
+    if (!diagnosisValidation.hasHigh) {
       log(`  no HIGH issues remain — finishing`);
       verdict = "ok";
       break;
@@ -417,7 +429,7 @@ export async function runDirectRefine(opts: RefineOpts): Promise<RefineResult> {
               : "") +
             (workspace.hasImage
               ? "The reference image and the current build views follow, then the full "
-              : "The target specification and the current build views follow, then the full ") + +
+              : "The target specification and the current build views follow, then the full ") +
             "SCAD source, then the reviewer's diagnosis.",
         },
         ...referenceParts,
@@ -474,11 +486,11 @@ export async function runDirectRefine(opts: RefineOpts): Promise<RefineResult> {
       };
 
       if (/^\s*NOCHANGE\s*$/im.test(raw)) {
-        log(`  patch declined to edit (NOCHANGE) — finishing`);
-        verdict = "ok";
-        landed = false;
-        cycle = maxCycles; // no more useful work
-        break;
+        reject("NOCHANGE cannot resolve the reviewer's outstanding HIGH issues. " +
+          "Provide a patch addressing the diagnosis; leaving the model unchanged does not approve it.");
+        log(`  [patch ${attempt}] NOCHANGE rejected — HIGH issues are unresolved`);
+        if (repeatedRejection) break;
+        continue;
       }
 
       const parsed = parsePatchResponse(raw);
@@ -558,7 +570,7 @@ export async function runDirectRefine(opts: RefineOpts): Promise<RefineResult> {
     }
 
     if (landed) barren = 0;
-    if (!landed && verdict !== "ok") {
+    if (!landed) {
       barren += 1;
       log(`  cycle ${cycle} produced no accepted edit (${barren} in a row)`);
       writeFileSync(join(stepDir, "summary.json"), JSON.stringify({

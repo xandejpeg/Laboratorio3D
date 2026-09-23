@@ -125,6 +125,7 @@ interface RuntimeReport {
   llm: { configured: boolean; baseUrl: string; model: string; notes: string[] };
   capabilities: { import: boolean; brief: boolean; generate: boolean; recompileParams: boolean; visualCritique: boolean };
   generationEnabled: boolean;
+  isaac?: { available: boolean; validation: string; note: string };
 }
 
 // ── tiny DOM helpers ────────────────────────────────────────────────────────
@@ -248,6 +249,11 @@ function updateGenerationAvailability(): void {
     : runtime?.capabilities.generate
       ? "Geração desativada neste ambiente. Configure a autorização de geração no servidor."
       : "Geração indisponível. Confira os requisitos e a configuração do provedor no estado do ambiente.";
+  $("#physical-validation-note").textContent = !runtime?.isaac
+    ? "Disponibilidade do Isaac Sim ainda não verificada. Exportar USD/URDF não comprova validação física."
+    : runtime.isaac.available
+      ? "Isaac Sim disponível; a validação física só poderá ser confirmada após a execução e seu relatório. Exportar USD/URDF não é validar física."
+      : "Isaac Sim não está disponível neste ambiente: o pipeline pode executar e exportar USD/URDF, mas ficará sem validação física.";
 }
 
 // ── runtime banner ──────────────────────────────────────────────────────────
@@ -611,6 +617,21 @@ function renderRuns(runs: CharacterRun[]): void {
 function wireGenerate(): void {
   const button = $<HTMLButtonElement>("#generate");
   const status = $("#generate-status");
+  const preset = $<HTMLSelectElement>("#generation-preset");
+  const steps = $<HTMLInputElement>("#max-steps");
+  const paint = $<HTMLInputElement>("#opt-paint");
+  const context = $<HTMLInputElement>("#opt-context");
+  const updatePreset = () => {
+    const best = preset.value === "best";
+    steps.disabled = paint.disabled = context.disabled = best;
+    steps.value = best ? "12" : "4";
+    paint.checked = context.checked = best;
+    $("#preset-description").textContent = best
+      ? "Best usa a referência 2D existente, feedback 3D por peça, montagem, pintura, movimento e URDF; até 12 ciclos de refino, sem limite de peças no planejador. Timeout inicial e deadline LLM configurados em 30 minutos; streaming ativo e a execução total podem durar mais. Pode gerar mais custos; não garante aprovação visual ou física."
+      : "Usa a referência 2D existente. Ajuste ciclos, pintura e renders de contexto abaixo; os demais limites do ambiente são preservados.";
+  };
+  preset.addEventListener("change", updatePreset);
+  updatePreset();
   button.addEventListener("click", async () => {
     if (!selected) return;
     const character = selected;
@@ -621,6 +642,7 @@ function wireGenerate(): void {
     try {
       const body = {
         key: character.record.key,
+        preset: preset.value,
         maxSteps: Number($<HTMLInputElement>("#max-steps").value),
         paint: $<HTMLInputElement>("#opt-paint").checked,
         contextRenders: $<HTMLInputElement>("#opt-context").checked,

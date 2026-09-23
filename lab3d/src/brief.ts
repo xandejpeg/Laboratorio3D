@@ -189,11 +189,21 @@ function renderPrompt(bundle: CharacterBundle, attributes: DescribedAttribute[],
   }
 
   lines.push("GEOMETRY REQUIREMENTS");
+  lines.push("- Use +Z up, -Y front and +X the object's right in the modelling convention. State anatomical left/right explicitly; do not infer a mirror operation from screen position alone.");
   lines.push("- Model the figure as named parts: head, neck, torso, hips, upper arms, forearms, hands, thighs, shins, feet, hair, garment.");
   lines.push("- Every part must touch or overlap its neighbour so the result is one connected solid.");
   lines.push("- Keep the hair as its own part sitting on the skull; it must follow the cranium, not float above it.");
-  lines.push("- Keep hands and feet present and readable; do not replace them with stumps.");
-  lines.push("- Neutral standing pose, arms slightly away from the torso, feet flat and slightly apart.");
+  lines.push("- Each hand needs a shaped palm, a correctly opposed thumb and four fingers, with visible taper and plausible knuckles. Keep digits attached and follow the reference's pose; do not substitute a ball, fork or block for a hand.");
+  lines.push("- Match the footwear actually visible in the image: ankle transition, heel, sole thickness and toe direction. Check front and profile so feet do not point sideways or appear as blocks.");
+  lines.push("- Build the face from the visible skull, jaw, cheek, brow, eyelid, nose and mouth proportions. Facial features must follow the surface; do not attach protruding spheres as eyes or a detached lip/nose. Preserve the visible expression and hairline.");
+  lines.push("- The pelvis and buttocks must form a continuous transition between the clothed waist and thighs. Infer hidden depth conservatively; do not add exaggerated lobes, muscle or exposed mechanical joints.");
+  lines.push("- Keep the standing pose shown in the reference, including arm spacing, hand orientation and foot spacing. Do not replace it with a T-pose or invent a pedestal.");
+  lines.push("- If assembly or rigid motion is enabled, keep its interfaces inside the existing body silhouette. Mechanical export must not add external hinges, gaps or accessories absent from the reference; it is not a deformable human rig.");
+  lines.push("");
+  lines.push("VISUAL REVIEW PRIORITIES");
+  lines.push("- Compare the frontal render with the reference using head/body, shoulder/waist/hip and limb-length ratios within each image. Compare ratios, not raw pixels from independently fitted cameras.");
+  lines.push("- Review face, both hands, both feet and pelvis explicitly, then inspect front, both profiles and back for gaps or intersections. A compiling model, higher polygon count or painted surface is not evidence of resemblance.");
+  lines.push("- Label profile/back geometry as inferred when those references are absent. Do not claim unseen anatomy or identity has been verified. If a critical region cannot be judged at the provided resolution, state the uncertainty instead of declaring it correct.");
 
   return lines.join("\n");
 }

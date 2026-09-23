@@ -46,6 +46,7 @@ verificado está em [WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md).
 | [docs/MILESTONE_1.md](docs/MILESTONE_1.md) | O que funciona, o que está bloqueado e os limites confirmados no código |
 | [docs/MECANICO_OFFLINE.md](docs/MECANICO_OFFLINE.md) | Compilação e renders mecânicos realmente executados sem modelo |
 | [docs/QUALITY_PROTOCOL.md](docs/QUALITY_PROTOCOL.md) | Referência feminina fixa, critérios e registro dos ensaios por IA |
+| [docs/PROCEDURA_BEST.md](docs/PROCEDURA_BEST.md) | Preset completo, opções efetivamente executadas e correções de transporte/refinamento |
 | [docs/BLENDER_RESULTS.md](docs/BLENDER_RESULTS.md) | Registrar uma revisão GLB/Blender vinculada ao snapshot 2D sem sobrescrever resultados |
 | [../ATTRIBUTION.md](../ATTRIBUTION.md) | Origem, licença e convivência com o upstream |
 

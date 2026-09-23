@@ -187,7 +187,23 @@ describe("laboratory HTTP import and boundaries", () => {
 
   test("generation is refused with blank credentials and never creates a job", async () => {
     expect((await post("/api/lab/generate", { key: fixture.key })).status).toBe(503);
+    expect((await post("/api/lab/generate", { key: fixture.key, preset: "best" })).status).toBe(503);
     expect((await (await request("/api/jobs")).json() as any).jobs).toEqual([]);
+  });
+
+  test("API describes the exact best recipe without claiming physical validation", () => {
+    const best = runtime.generationPresets.best;
+    expect(best.mode).toBe("procedura-automatic");
+    expect(best.referencePolicy).toBe("existing-authoritative-image");
+    expect(best.options).toMatchObject({ preset: "best", maxSteps: 12, contextRenders: true, assembly: true, paint: true, motion: true, motionUrdf: true });
+    expect(best.environment).toMatchObject({ PROCEDURA_LLM_TIMEOUT_MS: "1800000", PROCEDURA_LLM_DEADLINE_MS: "1800000", PROCEDURA_MAX_PARTS: "0", PROCEDURA_PROVIDER: "openai" });
+    expect(best.environment.OPENAI_API_KEY).toBeUndefined();
+    expect(best.models).toEqual({ agent: "gpt-5.2", scad: "gpt-5.2", paint: "gpt-5.2", motion: "gpt-5.2" });
+    expect(runtime.isaac.validation).toBe("not-run");
+    if (!runtime.isaac.available) {
+      expect(best.options.motionNoValidate).toBe(true);
+      expect(best.physicalValidation.status).toBe("skipped-unavailable");
+    }
   });
 
   test("evidence exposes real hashes and keeps quality explicitly unreviewed", async () => {
