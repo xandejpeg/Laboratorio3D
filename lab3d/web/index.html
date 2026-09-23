@@ -136,18 +136,18 @@
                 </p>
                 <label class="inline">Perfil
                   <select id="generation-preset">
-                    <option value="best" selected>Best · qualidade ampliada</option>
-                    <option value="default">Padrão · configuração anterior</option>
+                    <option value="default" selected>Econômico · 1 ciclo</option>
+                    <option value="best">Best · qualidade ampliada</option>
                     <option value="custom">Personalizado</option>
                   </select>
                 </label>
                 <p id="preset-description" class="hint small"></p>
                 <label class="inline">
                   Ciclos de refino
-                  <input id="max-steps" type="number" min="0" max="20" value="12" disabled />
+                  <input id="max-steps" type="number" min="0" max="20" value="1" />
                 </label>
-                <label class="inline"><input id="opt-paint" type="checkbox" checked disabled /> Pintar materiais (fase extra)</label>
-                <label class="inline"><input id="opt-context" type="checkbox" checked disabled /> Renders de contexto por peça (mais lento)</label>
+                <label class="inline"><input id="opt-paint" type="checkbox" /> Pintar materiais (fase extra)</label>
+                <label class="inline"><input id="opt-context" type="checkbox" /> Renders de contexto por peça (mais lento)</label>
                 <p id="physical-validation-note" class="hint small"></p>
                 <button id="generate" class="primary" disabled>Gerar modelo</button>
                 <p id="generation-availability" class="hint small availability"></p>

@@ -287,7 +287,7 @@ async function handleLabGenerate(req: Request): Promise<Response> {
   const options: JobOptions = { imagePath };
   if (body.preset !== undefined && !["default", "best", "custom"].includes(body.preset)) return fail("invalid preset", 422);
   if (body.preset !== undefined) options.preset = body.preset;
-  const steps = body.maxSteps ?? 4;
+  const steps = body.maxSteps ?? 1;
   if (typeof steps !== "number" || !Number.isInteger(steps) || steps < 0 || steps > 20) return fail("maxSteps must be an integer from 0 to 20", 422);
   options.maxSteps = steps;
   for (const k of ["paint", "contextRenders", "exportStl", "assembly", "motion", "motionUrdf"] as const) {

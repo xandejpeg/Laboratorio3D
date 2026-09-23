@@ -624,11 +624,11 @@ function wireGenerate(): void {
   const updatePreset = () => {
     const best = preset.value === "best";
     steps.disabled = paint.disabled = context.disabled = best;
-    steps.value = best ? "12" : "4";
+    steps.value = best ? "12" : preset.value === "default" ? "1" : "4";
     paint.checked = context.checked = best;
     $("#preset-description").textContent = best
       ? "Best usa a referência 2D existente, feedback 3D por peça, montagem, pintura, movimento e URDF; até 12 ciclos de refino, sem limite de peças no planejador. Timeout inicial e deadline LLM configurados em 30 minutos; streaming ativo e a execução total podem durar mais. Pode gerar mais custos; não garante aprovação visual ou física."
-      : "Usa a referência 2D existente. Ajuste ciclos, pintura e renders de contexto abaixo; os demais limites do ambiente são preservados.";
+      : "Geração por API com a referência 2D existente; requer provedor configurado e pode gerar custos. Ajuste ciclos, pintura e renders de contexto abaixo.";
   };
   preset.addEventListener("change", updatePreset);
   updatePreset();
