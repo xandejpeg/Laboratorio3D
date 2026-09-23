@@ -70,11 +70,16 @@ export function createViewer(host: HTMLElement): ViewerHandle {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
 
-  scene.add(new THREE.HemisphereLight(0xdfe7f2, 0x30343c, 2.1));
-  const key = new THREE.DirectionalLight(0xffffff, 2.2);
+  // Neutral studio fill keeps downward-facing facial planes readable. Strong
+  // overhead-only lighting exaggerates shadows already present in image textures.
+  scene.add(new THREE.HemisphereLight(0xe5e9ef, 0x86807a, 2.0));
+  const key = new THREE.DirectionalLight(0xffffff, 1.65);
   key.position.set(2.5, 3.5, 3);
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0x88a6ff, 0.9);
+  const fill = new THREE.DirectionalLight(0xfff7f0, 0.75);
+  fill.position.set(0, 0.3, 5);
+  scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xd6deea, 0.6);
   rim.position.set(-3, 1.5, -2.5);
   scene.add(rim);
 
